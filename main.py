@@ -1,9 +1,9 @@
+# 暂时的一个及格代码
+
 import networkx as nx
 import schemdraw
-import numpy
 import schemdraw.elements as elm
 import xml.etree.ElementTree as ET
-from netlistAnalysisMethods import *
 
 # Define SPICE netlist
 netlist = """
@@ -22,51 +22,87 @@ convert_netlist_to_xml_file(netlist, "spice_netlist.xml")
 # Read and parse XML data
 tree = ET.parse("spice_netlist.xml")
 root = tree.getroot()
+print(tree)
+print(root)
 
 # Create directed graph
 G = nx.DiGraph()
 
-# Add components to graph
 for component in root.find('components'):
     ctype = component.attrib['type']
     cid = component.attrib['id']
     node1 = component.find('node1').text
     node2 = component.find('node2').text
 
-    # Add nodes and edges to graph
     G.add_node(cid, type=ctype)
-    if ctype == 'V':
-        G.add_edge(node1, cid)  # Positive terminal of V -> component
-        G.add_edge(cid, node2)  # Component -> Negative terminal of V
-    else:
-        G.add_edge(node1, cid)  # Node1 -> Component
-        G.add_edge(cid, node2)  # Component -> Node2
 
-EnlargeSize = 2.5
-grid_size = 1  # Define the grid size
+    if ctype == 'V':
+        # 对于电压源，保持固定的连接方向
+        G.add_edge(node1, cid)
+        G.add_edge(cid, node2)
+    else:
+        # 获取节点坐标
+        pos_node1 = pos[node1]
+        pos_node2 = pos[node2]
+        pos_cid = pos[cid]
+
+        # 计算两种连接方式的总距离
+        distance1 = calculate_distance(pos_node1, pos_cid) + calculate_distance(pos_cid, pos_node2)
+        distance2 = calculate_distance(pos_node2, pos_cid) + calculate_distance(pos_cid, pos_node1)
+
+        # 根据距离选择更短的连接方式
+        if distance1 <= distance2:
+            G.add_edge(node1, cid)
+            G.add_edge(cid, node2)
+        else:
+            G.add_edge(node2, cid)
+            G.add_edge(cid, node1)
+
+# # Add components to graph
+# for component in root.find('components'):
+#     ctype = component.attrib['type']
+#     cid = component.attrib['id']
+#     node1 = component.find('node1').text
+#     node2 = component.find('node2').text
+
+#     G.add_node(cid, type=ctype)
+
+#     G.add_edge(node1, cid)  # Node1 -> Component
+#     G.add_edge(cid, node2)  # Component -> Node2
+
+#     # # Add nodes and edges to graph
+#     # G.add_node(cid, type=ctype)
+#     # if ctype == 'V':
+#     #     G.add_edge(node1, cid)  # Positive terminal of V -> component
+#     #     G.add_edge(cid, node2)  # Component -> Negative terminal of V
+#     # else:
+#     #     G.add_edge(node1, cid)  # Node1 -> Component
+#     #     G.add_edge(cid, node2)  # Component -> Node2
+
+EnlargeSize = 3
 pos = nx.spring_layout(G, scale=EnlargeSize)
 d = schemdraw.Drawing()
-
-def snap_to_grid(x, y, grid_size):
-    """Snap the x, y coordinates to the nearest grid point."""
-    return (round(x / grid_size) * grid_size, round(y / grid_size) * grid_size)
 
 elements = {}
 pins = {}
 occupied_paths = set()  # Global path occupancy set
 
+
 def is_path_occupied(start, end):
     """Check if the path is occupied."""
     return (start, end) in occupied_paths or (end, start) in occupied_paths
+
 
 def mark_path_occupied(start, end):
     """Mark the path as occupied."""
     occupied_paths.add((start, end))
     occupied_paths.add((end, start))
 
+
 def calculate_distance(point1, point2):
     """Calculate Euclidean distance between two points."""
     return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5
+
 
 def get_best_pins(comp_pos, neighbor_pos, comp_pins, neighbor_pins):
     """Find the best pins to connect based on the shortest distance."""
@@ -84,6 +120,7 @@ def get_best_pins(comp_pos, neighbor_pos, comp_pins, neighbor_pins):
 
     return best_comp_pin, best_neighbor_pin
 
+
 def draw_segment(d, start_pos, end_pos):
     """Draw a segment from start_pos to end_pos, avoiding occupied paths by rerouting if necessary."""
     if start_pos != end_pos:
@@ -96,7 +133,9 @@ def draw_segment(d, start_pos, end_pos):
                     for dx in [offset, -offset]:
                         mid_point1 = (start_pos[0] + dx, start_pos[1])
                         mid_point2 = (end_pos[0] + dx, end_pos[1])
-                        if not is_path_occupied(start_pos, mid_point1) and not is_path_occupied(mid_point1, mid_point2) and not is_path_occupied(mid_point2, end_pos):
+                        if not is_path_occupied(start_pos, mid_point1) and not is_path_occupied(mid_point1,
+                                                                                                mid_point2) and not is_path_occupied(
+                                mid_point2, end_pos):
                             d += elm.Line().at(start_pos).to(mid_point1)
                             mark_path_occupied(start_pos, mid_point1)
                             d += elm.Line().at(mid_point1).to(mid_point2)
@@ -111,7 +150,9 @@ def draw_segment(d, start_pos, end_pos):
                             break
                         mid_point1 = (start_pos[0], start_pos[1] + dy)
                         mid_point2 = (end_pos[0], end_pos[1] + dy)
-                        if not is_path_occupied(start_pos, mid_point1) and not is_path_occupied(mid_point1, mid_point2) and not is_path_occupied(mid_point2, end_pos):
+                        if not is_path_occupied(start_pos, mid_point1) and not is_path_occupied(mid_point1,
+                                                                                                mid_point2) and not is_path_occupied(
+                                mid_point2, end_pos):
                             d += elm.Line().at(start_pos).to(mid_point1)
                             mark_path_occupied(start_pos, mid_point1)
                             d += elm.Line().at(mid_point1).to(mid_point2)
@@ -126,10 +167,11 @@ def draw_segment(d, start_pos, end_pos):
             d += elm.Line().at(start_pos).to(end_pos)
             mark_path_occupied(start_pos, end_pos)
 
+
 for node in G.nodes:
     node_info = G.nodes[node]
     node_pos = pos[node]
-    x, y = snap_to_grid(EnlargeSize * node_pos[0], EnlargeSize * -node_pos[1], grid_size)
+    x, y = (EnlargeSize * node_pos[0], EnlargeSize * -node_pos[1])
 
     if node_info.get('type') == 'R':
         elements[node] = d.add(elm.Resistor().at((x, y)).right().label(node))
@@ -182,13 +224,16 @@ for comp in G.nodes:
                     mid_x, mid_y = end_pos[0], start_pos[1]
 
             # Draw horizontal segment
-            draw_segment(d, start_pos, (mid_x, start_pos[1]))
+            d += elm.Line().at(start_pos).to((mid_x, start_pos[1]))
+            mark_path_occupied(start_pos, (mid_x, start_pos[1]))
 
             # Draw vertical segment
-            draw_segment(d, (mid_x, start_pos[1]), (mid_x, mid_y))
+            d += elm.Line().at((mid_x, start_pos[1])).to((mid_x, mid_y))
+            mark_path_occupied((mid_x, start_pos[1]), (mid_x, mid_y))
 
             # Draw final segment to the end position
-            draw_segment(d, (mid_x, mid_y), end_pos)
+            d += elm.Line().at((mid_x, mid_y)).to(end_pos)
+            mark_path_occupied((mid_x, mid_y), end_pos)
 
             pins[comp][comp_pin] = True
             pins[neighbor][neighbor_pin] = True
@@ -197,4 +242,3 @@ for comp in G.nodes:
 
 # Draw the circuit diagram
 d.draw()
-

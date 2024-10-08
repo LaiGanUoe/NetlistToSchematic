@@ -1,0 +1,2 @@
+2024-10-06 16:46:21,173 - ERROR - Error processing component {'id': 'R1', 'type': 'R'}: name 'pos' is not defined
+2024-10-06 16:46:21,173 - ERROR - Error processing component {'id': 'C1', 'type': 'C'}: name 'pos' is not defined

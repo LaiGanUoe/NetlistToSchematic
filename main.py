@@ -4,6 +4,7 @@ import networkx as nx
 import schemdraw
 import schemdraw.elements as elm
 import xml.etree.ElementTree as ET
+from netlistAnalysisMethods import *
 
 # Define SPICE netlist
 netlist = """

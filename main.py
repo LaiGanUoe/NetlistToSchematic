@@ -1,5 +1,3 @@
-# 暂时的一个及格代码
-
 import networkx as nx
 import schemdraw
 import schemdraw.elements as elm
@@ -23,62 +21,25 @@ convert_netlist_to_xml_file(netlist, "spice_netlist.xml")
 # Read and parse XML data
 tree = ET.parse("spice_netlist.xml")
 root = tree.getroot()
-print(tree)
-print(root)
 
 # Create directed graph
 G = nx.DiGraph()
 
+# Add components to graph
 for component in root.find('components'):
     ctype = component.attrib['type']
     cid = component.attrib['id']
     node1 = component.find('node1').text
     node2 = component.find('node2').text
 
+    # Add nodes and edges to graph
     G.add_node(cid, type=ctype)
-
     if ctype == 'V':
-        # 对于电压源，保持固定的连接方向
-        G.add_edge(node1, cid)
-        G.add_edge(cid, node2)
+        G.add_edge(node1, cid)  # Positive terminal of V -> component
+        G.add_edge(cid, node2)  # Component -> Negative terminal of V
     else:
-        # 获取节点坐标
-        pos_node1 = pos[node1]
-        pos_node2 = pos[node2]
-        pos_cid = pos[cid]
-
-        # 计算两种连接方式的总距离
-        distance1 = calculate_distance(pos_node1, pos_cid) + calculate_distance(pos_cid, pos_node2)
-        distance2 = calculate_distance(pos_node2, pos_cid) + calculate_distance(pos_cid, pos_node1)
-
-        # 根据距离选择更短的连接方式
-        if distance1 <= distance2:
-            G.add_edge(node1, cid)
-            G.add_edge(cid, node2)
-        else:
-            G.add_edge(node2, cid)
-            G.add_edge(cid, node1)
-
-# # Add components to graph
-# for component in root.find('components'):
-#     ctype = component.attrib['type']
-#     cid = component.attrib['id']
-#     node1 = component.find('node1').text
-#     node2 = component.find('node2').text
-
-#     G.add_node(cid, type=ctype)
-
-#     G.add_edge(node1, cid)  # Node1 -> Component
-#     G.add_edge(cid, node2)  # Component -> Node2
-
-#     # # Add nodes and edges to graph
-#     # G.add_node(cid, type=ctype)
-#     # if ctype == 'V':
-#     #     G.add_edge(node1, cid)  # Positive terminal of V -> component
-#     #     G.add_edge(cid, node2)  # Component -> Negative terminal of V
-#     # else:
-#     #     G.add_edge(node1, cid)  # Node1 -> Component
-#     #     G.add_edge(cid, node2)  # Component -> Node2
+        G.add_edge(node1, cid)  # Node1 -> Component
+        G.add_edge(cid, node2)  # Component -> Node2
 
 EnlargeSize = 3
 pos = nx.spring_layout(G, scale=EnlargeSize)
@@ -88,22 +49,18 @@ elements = {}
 pins = {}
 occupied_paths = set()  # Global path occupancy set
 
-
 def is_path_occupied(start, end):
     """Check if the path is occupied."""
     return (start, end) in occupied_paths or (end, start) in occupied_paths
-
 
 def mark_path_occupied(start, end):
     """Mark the path as occupied."""
     occupied_paths.add((start, end))
     occupied_paths.add((end, start))
 
-
 def calculate_distance(point1, point2):
     """Calculate Euclidean distance between two points."""
     return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5
-
 
 def get_best_pins(comp_pos, neighbor_pos, comp_pins, neighbor_pins):
     """Find the best pins to connect based on the shortest distance."""
@@ -121,53 +78,25 @@ def get_best_pins(comp_pos, neighbor_pos, comp_pins, neighbor_pins):
 
     return best_comp_pin, best_neighbor_pin
 
-
 def draw_segment(d, start_pos, end_pos):
-    """Draw a segment from start_pos to end_pos, avoiding occupied paths by rerouting if necessary."""
     if start_pos != end_pos:
         if is_path_occupied(start_pos, end_pos):
-            # If the path is occupied, try to reroute
-            rerouted = False
-            for offset in range(1, 4):  # Try different offsets for rerouting
-                if not rerouted:
-                    # Try right and left offsets for horizontal rerouting
-                    for dx in [offset, -offset]:
-                        mid_point1 = (start_pos[0] + dx, start_pos[1])
-                        mid_point2 = (end_pos[0] + dx, end_pos[1])
-                        if not is_path_occupied(start_pos, mid_point1) and not is_path_occupied(mid_point1,
-                                                                                                mid_point2) and not is_path_occupied(
-                                mid_point2, end_pos):
-                            d += elm.Line().at(start_pos).to(mid_point1)
-                            mark_path_occupied(start_pos, mid_point1)
-                            d += elm.Line().at(mid_point1).to(mid_point2)
-                            mark_path_occupied(mid_point1, mid_point2)
-                            d += elm.Line().at(mid_point2).to(end_pos)
-                            mark_path_occupied(mid_point2, end_pos)
-                            rerouted = True
-                            break
-                    # Try up and down offsets for vertical rerouting
-                    for dy in [offset, -offset]:
-                        if rerouted:
-                            break
-                        mid_point1 = (start_pos[0], start_pos[1] + dy)
-                        mid_point2 = (end_pos[0], end_pos[1] + dy)
-                        if not is_path_occupied(start_pos, mid_point1) and not is_path_occupied(mid_point1,
-                                                                                                mid_point2) and not is_path_occupied(
-                                mid_point2, end_pos):
-                            d += elm.Line().at(start_pos).to(mid_point1)
-                            mark_path_occupied(start_pos, mid_point1)
-                            d += elm.Line().at(mid_point1).to(mid_point2)
-                            mark_path_occupied(mid_point1, mid_point2)
-                            d += elm.Line().at(mid_point2).to(end_pos)
-                            mark_path_occupied(mid_point2, end_pos)
-                            rerouted = True
-                            break
-            if not rerouted:
-                raise RuntimeError(f"Failed to find a rerouted path from {start_pos} to {end_pos}")
+            # If path is occupied, try to reroute
+            if start_pos[0] == end_pos[0]:  # Vertical line is occupied
+                mid_point1 = (start_pos[0] + 1, start_pos[1])
+                mid_point2 = (end_pos[0] + 1, end_pos[1])
+            else:  # Horizontal line is occupied
+                mid_point1 = (start_pos[0], start_pos[1] + 1)
+                mid_point2 = (end_pos[0], end_pos[1] + 1)
+            d += elm.Line().at(start_pos).to(mid_point1)
+            mark_path_occupied(start_pos, mid_point1)
+            d += elm.Line().at(mid_point1).to(mid_point2)
+            mark_path_occupied(mid_point1, mid_point2)
+            d += elm.Line().at(mid_point2).to(end_pos)
+            mark_path_occupied(mid_point2, end_pos)
         else:
             d += elm.Line().at(start_pos).to(end_pos)
             mark_path_occupied(start_pos, end_pos)
-
 
 for node in G.nodes:
     node_info = G.nodes[node]

@@ -121,8 +121,10 @@ def pretty_print_xml(element):
     return reparsed.toprettyxml(indent="  ")
 
 
-def convert_netlist_to_xml_file(netlist):
+def convert_netlist_to_xml_file(netlist, output_filename="spice_netlist.xml"):
     components, commands, subcircuits = parse_spice_netlist(netlist)
     xml_root = netlist_to_xml(components, commands, subcircuits)
     pretty_xml = pretty_print_xml(xml_root)
+    with open(output_filename, "w") as f:
+        f.write(pretty_xml)
     print(pretty_xml)

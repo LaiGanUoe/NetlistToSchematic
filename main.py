@@ -11,15 +11,15 @@ from routingDetection import *
 
 # Define SPICE netlist
 netlist = """
-* AC Analysis Example
-R1 N1 N2 1k        ; Resistor R1, 1kΩ
-L1 N2 N3 10m       ; Inductor L1, 10mH
-C1 N3 0 1u         ; Capacitor C1, 1μF
-V1 N1 0 AC 1       ; Input AC voltage source, amplitude 1V
-.AC LIN 100 1k 10k ; AC analysis from 1kHz to 10kHz, linear step of 100 points
+* 电流源驱动的二极管
+I1 1 0 DC 1A         ; 恒定直流电流源，1A
+D1 1 2 1N4148        ; 二极管1N4148，连接节点1和节点2
+R1 2 0 10            ; 负载电阻10欧姆
 .END
+
 """
-EnlargeSize = 2.5
+enlargeSize = 3
+max_attempts = 200
 
 def create_graph_from_xml(xml_file):
     """Create a graph from the XML data."""
@@ -55,7 +55,7 @@ def create_graph_from_xml(xml_file):
 
     return G, components_element
 
-def draw_circuit(G, components_element, max_attempts, EnlargeSize):
+def draw_circuit(G, components_element, max_attempts=100, EnlargeSize=2.5):
     """Attempt to draw the circuit diagram without wire crossings."""
     attempt = 0
     success = False
@@ -174,6 +174,24 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y):
             'positive': elements[node].absanchors['end'],
             'negative': elements[node].absanchors['start']
         }
+    elif node_info.get('type') == 'I':
+        # Draw current source
+        label_text = f"{node}\n{node_info.get('value')}"
+        elements[node] = d.add(elm.SourceI().at((x, y)).up().label(label_text))
+        # For upward current source, positive is at 'start', negative at 'end'
+        pins[node] = {
+            'positive': elements[node].absanchors['end'],
+            'negative': elements[node].absanchors['start']
+        }
+    elif node_info.get('type') == 'D':
+        # Draw diode
+        label_text = f"{node}\n{node_info.get('value')}"
+        elements[node] = d.add(elm.Diode().at((x, y)).right().label(label_text))
+        # For diode, anode is at 'start', cathode at 'end'
+        pins[node] = {
+            'anode': elements[node].absanchors['start'],
+            'cathode': elements[node].absanchors['end']
+        }
     elif node_info.get('type') == 'ground':
         # Draw ground
         elements[node] = d.add(elm.Ground().at((x, y)))
@@ -273,6 +291,10 @@ def get_component_pin(comp, neighbor, comp_info, components_element, pins):
                 node_coords[node] = pins[node]['positive']
             elif node in pins and 'negative' in pins[node]:
                 node_coords[node] = pins[node]['negative']
+            elif node in pins and 'anode' in pins[node]:
+                node_coords[node] = pins[node]['anode']
+            elif node in pins and 'cathode' in pins[node]:
+                node_coords[node] = pins[node]['cathode']
             else:
                 continue
 
@@ -307,6 +329,27 @@ def get_component_pin(comp, neighbor, comp_info, components_element, pins):
             return 'positive'
         elif neighbor == node2:
             return 'negative'
+
+    elif comp_info.get('type') == 'I':
+        # For current source
+        component = next(c for c in components_element if c.attrib['id'] == comp)
+        node1 = component.find('node1').text  # Positive terminal (current enters)
+        node2 = component.find('node2').text  # Negative terminal (current exits)
+        if neighbor == node1:
+            return 'positive'
+        elif neighbor == node2:
+            return 'negative'
+
+    elif comp_info.get('type') == 'D':
+        # For diode
+        component = next(c for c in components_element if c.attrib['id'] == comp)
+        node1 = component.find('node1').text  # Anode
+        node2 = component.find('node2').text  # Cathode
+        if neighbor == node1:
+            return 'anode'
+        elif neighbor == node2:
+            return 'cathode'
+
     else:
         # For nodes and ground
         return 'pin'
@@ -333,4 +376,4 @@ if __name__ == "__main__":
     G, components_element = create_graph_from_xml("spice_netlist.xml")
 
     # Draw the circuit diagram
-    draw_circuit(G, components_element, max_attempts=100, EnlargeSize=EnlargeSize)
+    draw_circuit(G, components_element, max_attempts=max_attempts, EnlargeSize=enlargeSize)

@@ -2,3 +2,5 @@
 *.iml
 *.xml
 /__pycache__
+*.svg
+*.svg

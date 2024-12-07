@@ -11,20 +11,51 @@ from routingDetection import *
 
 # 定义 SPICE 网表，包含 JFET
 netlist = """
-* JFET共栅放大器
-VDD 1 0 DC 12        ; 电源电压12V
-Vi 2 0 AC 1          ; 输入信号1V AC
-R1 1 3 5k            ; 漏极电阻5k欧姆
-RS 4 0 1k            ; 源极电阻1k欧姆
-J1 3 0 4 JFET_N      ; N型JFET，D=3, G=0, S=4
-.END
+* Five JFET Transistor Circuit Netlist
+* Vdd is the supply voltage, Rs are source resistors, Rd are drain resistors.
+
+* Define Power Supply
+Vdd 1 0 DC 12V
+
+* JFET Transistors (2N5457 used here as example)
+* Format: J<name> <drain> <gate> <source> <model>
+J1 2 3 4 JFETMODEL
+J2 5 6 7 JFETMODEL
+J3 8 9 10 JFETMODEL
+J4 11 12 13 JFETMODEL
+J5 14 15 16 JFETMODEL
+
+* Drain Resistors
+R1 2 1 10k
+R2 5 1 10k
+R3 8 1 10k
+R4 11 1 10k
+R5 14 1 10k
+
+* Source Resistors
+R6 4 0 1k
+R7 7 0 1k
+R8 10 0 1k
+R9 13 0 1k
+R10 16 0 1k
+
+* Model Definition for JFET (N-Channel Example)
+.model JFETMODEL NJF (IS=1E-14 BETA=2E-3 VTO=-2)
+
+* Analysis Command
+*.dc Vdd 0 12 0.1
+*.tran 0.1ms 10ms
+*.plot tran v(2) v(5) v(8) v(11) v(14)
+
+.end
+
 
 """
 
 # 参数
-EnlargeSize = 3
+EnlargeSize = 5
 shrink_ratio = 0.08  # 默认 shrink_ratio
-max_attempts = 30
+max_attempts = 300
 routing_method = 1  # 1: 当前方法, 2: A* 算法
 
 # Shrink ratios per component type

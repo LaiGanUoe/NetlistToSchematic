@@ -5,27 +5,23 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from shapely.geometry import LineString, Polygon, Point, box
 from shapely.strtree import STRtree
+import shapely.ops
 import xml.dom.minidom as minidom
+import subprocess
+import os
 
 # Define the SPICE netlist, including a JFET
 netlist = """
-* 简单的JFET源极随动电路
-VDD   drain   0     DC 10V
-J1    drain   gate   source  JFETMOD
-Rsrc  source  0      1k
-Vgate gate    0      DC 2V
-
-* 简单的JFET模型定义（参数仅为演示，可自行调整）
-.model JFETMOD NJF (BETA=1m VTO=-2 RD=50 RS=50)
-
-.dc VDD 0 10 1
-.print dc V(drain) V(source)
-.end
+* JFET Constant Current Source
+VDD 1 0 DC 15        ; Power supply voltage 15V
+J1 1 0 2 JFET_N      ; N-type JFET, drain connected to power supply, gate and source shorted
+R1 2 0 10            ; Load resistor 10 Ohms
+.END
 
 """
 
 # Parameters
-EnlargeSize = 2.5
+EnlargeSize = 2
 shrink_ratio = 0.08  # Default shrink_ratio
 max_attempts = 300
 routing_method = 1  # 1: Current method, 2: A* algorithm
@@ -45,11 +41,8 @@ shrink_ratios = {
     # Add other component types if needed
 }
 
-# 在draw_circuit函数的开头定义一个全局字典用来存储方向
-component_directions = {}
-
 def parse_spice_netlist(netlist):
-    """Parse the SPICE netlist and extract components, commands, and subcircuits."""
+    # ... (Your existing parse_spice_netlist function)
     components = []
     commands = []
     subcircuits = []
@@ -128,7 +121,7 @@ def parse_spice_netlist(netlist):
     return components, commands, subcircuits
 
 def netlist_to_xml(components, commands, subcircuits):
-    """Convert the parsed netlist data to an XML structure."""
+    # ... (Your existing netlist_to_xml function)
     root = ET.Element("spice_netlist")
 
     components_elem = ET.SubElement(root, "components")
@@ -154,13 +147,13 @@ def netlist_to_xml(components, commands, subcircuits):
     return root
 
 def pretty_print_xml(element):
-    """Return a pretty-printed XML string."""
+    # ... (Your existing pretty_print_xml function)
     rough_string = ET.tostring(element, 'utf-8')
     reparsed = minidom.parseString(rough_string)
     return reparsed.toprettyxml(indent="  ")
 
 def convert_netlist_to_xml_file(netlist, output_filename="spice_netlist.xml"):
-    """Convert the netlist to XML and save it to a file."""
+    # ... (Your existing convert_netlist_to_xml_file function)
     components, commands, subcircuits = parse_spice_netlist(netlist)
     xml_root = netlist_to_xml(components, commands, subcircuits)
     pretty_xml = pretty_print_xml(xml_root)
@@ -169,7 +162,7 @@ def convert_netlist_to_xml_file(netlist, output_filename="spice_netlist.xml"):
     print(pretty_xml)
 
 def create_graph_from_xml(xml_root):
-    """Create a graph from XML data."""
+    # ... (Your existing create_graph_from_xml function)
     components_element = xml_root.find('components')
     if components_element is None or len(components_element) == 0:
         print("No components found in XML.")
@@ -201,7 +194,7 @@ def create_graph_from_xml(xml_root):
     return G, components_element
 
 def update_xml_positions(xml_root, pos):
-    """Update the XML with the positions of components and nodes."""
+    # ... (Your existing update_xml_positions function)
     components_elem = xml_root.find('components')
     for comp in components_elem:
         cid = comp.attrib['id']
@@ -225,9 +218,11 @@ def update_xml_positions(xml_root, pos):
         node_elem.attrib['y'] = str(y)
 
 def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, EnlargeSize=2.5, shrink_ratio=0.1, routing_method=1, auto=1):
-    """Attempt to draw the circuit, avoiding collisions with components."""
+    # ... (Your existing draw_circuit function)
     attempt = 0
     success = False
+    all_wires = []  # Initialize all_wires
+    pos = {}        # Initialize pos
 
     positions_in_xml = {}
     components_elem = xml_root.find('components')
@@ -243,12 +238,17 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
                 positions_in_xml[nid] = (float(node.attrib['x']), float(node.attrib['y']))
 
     if auto == 1:
-        # Automatic layout
+        # Automatic layout using tsmpy
         while attempt < max_attempts:
             attempt += 1
             print(f"Attempt {attempt}")
 
-            pos = nx.spring_layout(G, scale=EnlargeSize)
+            # Generate orthogonal layout using tsmpy
+            pos = generate_tsmpy_layout(G)
+
+            if pos is None:
+                print("Failed to generate layout with tsmpy.")
+                continue
 
             d = schemdraw.Drawing()
             elements = {}
@@ -342,10 +342,13 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
         if not success:
             # Reached max attempts, draw the circuit with overlaps highlighted
             print(f"No collision-free layout found after {max_attempts} attempts. Showing the last attempt with overlaps.")
+            if not all_wires:
+                print("No wires to draw.")
+                return
             # Draw all wires onto the diagram
             for wire_info in all_wires:
                 line = wire_info['line']
-                color = wire_info['color'] if 'color' in wire_info else 'black'
+                color = wire_info.get('color', 'black')
                 d.add(elm.Line().at(line.coords[0]).to(line.coords[1]).color(color))
             # Update positions in XML
             update_xml_positions(xml_root, pos)
@@ -436,7 +439,7 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
                 # Draw all wires onto the diagram
                 for wire_info in all_wires:
                     line = wire_info['line']
-                    color = wire_info['color'] if 'color' in wire_info else 'black'
+                    color = wire_info.get('color', 'black')
                     d.add(elm.Line().at(line.coords[0]).to(line.coords[1]).color(color))
             else:
                 # Draw all wires onto the diagram
@@ -452,15 +455,29 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
     # Render the circuit diagram
     d.draw()
 
+def generate_tsmpy_layout(G):
+    """Generate orthogonal layout using tsmpy with GML input."""
+    try:
+        # Export NetworkX graph to GML file
+        nx.write_gml(G, 'graph.gml')
+
+        # 读取图数据
+        A = nx.Graph(nx.read_gml('graph.gml'))
+
+        # 初始化布局
+        pos = {node: eval(node) for node in G}
+
+        # 生成正交布局
+        tsm = TSM(A, pos)
+
+        # 返回布局位置
+        return tsm.pos
+    except Exception as e:
+        print(f"Error generating tsmpy layout: {e}")
+        return None
+
 def check_overlapping_wires(all_wires):
-    """Check if there are overlapping wires in the list.
-
-    Args:
-        all_wires (list): List of all wire information, each is a dict containing 'line' and 'color'.
-
-    Returns:
-        overlapping (bool): Whether there are overlapping wires.
-    """
+    # ... (Your existing check_overlapping_wires function)
     overlapping = False
     num_wires = len(all_wires)
     for i in range(num_wires):
@@ -476,7 +493,7 @@ def check_overlapping_wires(all_wires):
     return overlapping
 
 def draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method, spatial_index, all_wires):
-    """Draw connections between components, avoiding collisions."""
+    # ... (Your existing draw_connections function)
     for comp, neighbor in G.edges():
         edge_key = tuple(sorted([comp, neighbor]))
         if edge_key in drawn_edges:
@@ -507,9 +524,9 @@ def draw_connections(d, G, components_element, pins, component_boxes, drawn_edge
             )
         elif routing_method == 2:
             # A* algorithm
-            selected_path, line_color = route_connection_astar(
-                start_pos, end_pos, component_boxes, spatial_index
-            )
+            # You can implement route_connection_astar if needed
+            print("A* routing method is not implemented.")
+            continue
         else:
             print(f"Unknown routing method: {routing_method}")
             continue
@@ -529,7 +546,7 @@ def draw_connections(d, G, components_element, pins, component_boxes, drawn_edge
         drawn_edges.add(edge_key)
 
 def draw_component_or_node(d, elements, pins, node, node_info, x, y):
-    """Draw a component or node in the schemdraw drawing."""
+    # ... (Your existing draw_component_or_node function)
     # Positions are now provided, so we use x and y directly
     if node_info.get('type') == 'R':
         # Draw resistor
@@ -542,7 +559,6 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y):
     elif node_info.get('type') == 'C':
         # Draw capacitor
         label_text = f"{node}\n{node_info.get('value')}"
-
         elements[node] = d.add(elm.Capacitor().at((x, y)).up().label(label_text))
         pins[node] = {
             'start': elements[node].absanchors['start'],
@@ -609,20 +625,15 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y):
         d.add(elm.Label().at((x, y)).label(node, ofst=0.2))
 
 def route_connection_current_method(start_pos, end_pos, component_boxes, comp, neighbor):
-    """Route connection using the current method, dynamically choosing turn points to minimize turns."""
+    # ... (Your existing route_connection_current_method function)
     # Define initial two path options
     path1 = [start_pos, (end_pos[0], start_pos[1]), end_pos]  # Horizontal first, then vertical
     path2 = [start_pos, (start_pos[0], end_pos[1]), end_pos]  # Vertical first, then horizontal
 
-    # Calculate midpoints
-    mid_x = (start_pos[0] + end_pos[0]) / 2
-    mid_y = (start_pos[1] + end_pos[1]) / 2
-
-
     # All path options
     paths = [
         ('H-V', path1),
-        ('V-H', path2)
+        ('V-H', path2),
     ]
 
     # Record path characteristics
@@ -682,7 +693,7 @@ def route_connection_current_method(start_pos, end_pos, component_boxes, comp, n
     return selected_path, line_color
 
 def is_wire_crossing_components(start_pos, end_pos, component_boxes, comp, neighbor):
-    """Check if a wire between two points crosses any components."""
+    # ... (Your existing is_wire_crossing_components function)
     line = LineString([start_pos, end_pos])
     line_start_point = Point(start_pos)
     line_end_point = Point(end_pos)
@@ -698,7 +709,7 @@ def is_wire_crossing_components(start_pos, end_pos, component_boxes, comp, neigh
     return False
 
 def get_component_pin(comp, neighbor, comp_info, components_element, pins):
-    """Determine the appropriate pin of a component based on the neighbor."""
+    # ... (Your existing get_component_pin function)
     if comp_info.get('type') in ['R', 'C', 'L']:
         # For non-directional components, find the pin corresponding to the neighbor node
         comp_pins = ['start', 'end']
@@ -791,7 +802,7 @@ def get_component_pin(comp, neighbor, comp_info, components_element, pins):
     return None
 
 def get_node_coordinate(pins, node):
-    """Get the coordinate of a node."""
+    # ... (Your existing get_node_coordinate function)
     if node in pins and 'pin' in pins[node]:
         return pins[node]['pin']
     elif node in pins and 'positive' in pins[node]:
@@ -812,7 +823,7 @@ def get_node_coordinate(pins, node):
         return None
 
 def get_pin_position(pins, comp, pin_name):
-    """Get the position of a pin."""
+    # ... (Your existing get_pin_position function)
     try:
         pos = pins[comp][pin_name]
         if isinstance(pos, schemdraw.util.Point):
@@ -827,9 +838,7 @@ def get_pin_position(pins, comp, pin_name):
 if __name__ == "__main__":
     # Convert netlist to XML
     xml_file = "spice_netlist.xml"
-
-    if auto == 1:
-        convert_netlist_to_xml_file(netlist, xml_file)
+    convert_netlist_to_xml_file(netlist, xml_file)
 
     # Parse XML
     tree = ET.parse(xml_file)

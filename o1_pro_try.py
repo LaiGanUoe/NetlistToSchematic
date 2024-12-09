@@ -32,22 +32,27 @@ import xml.dom.minidom as minidom
 
 # Test SPICE netlist used for demonstration:
 netlist = """
-*Multiple dc sources
-v1 2 0 dc 24 
-v2 3 0 dc 15 
-r1 1 2 10k 
-r2 2 3 8.1k 
-r3 2 0 4.7k 
+*Common-base BJT amplifier 
+vsupply 1 0 dc 24 
+vin 0 4 dc 
+rc 1 2 800 
+re 3 4 100 
+q1 2 0 3 mod1 
+.model mod1 npn bf=50 
+.dc vin 0 5 0.1 
+.print dc v(2,3) 
+.plot dc v(2,3) 
 .end 
+
 
 
 """
 
 # Adjustable parameters for layout attempts
-EnlargeSize = 4
+EnlargeSize = 3
 max_attempts = 300
 routing_method = 1
-auto = 1
+auto = 0
 shrink_size = 0.05
 
 # --------------------------------------------------------------------------------------------

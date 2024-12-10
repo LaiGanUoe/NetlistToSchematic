@@ -6,6 +6,7 @@ import numpy as np
 from shapely.geometry import LineString, Polygon, Point
 from shapely.strtree import STRtree
 import xml.dom.minidom as minidom
+import math
 
 netlist = """
 *Common-base BJT amplifier 
@@ -19,15 +20,54 @@ q1 2 0 3 mod1
 .print dc v(2,3) 
 .plot dc v(2,3) 
 .end 
+
 """
 
 EnlargeSize = 8
-max_attempts = 300
+max_attempts = 100
 routing_method = 1
-auto = 1
+auto = 0
 shrink_size = 0.05
 wire_safe_color = 'green'
 wire_danger_color = 'red'
+
+default_directions = {
+    'GND': 'right',  # In this library, the default direction of ground is right
+    'R': 'right',
+    'C': 'right',
+    'L': 'right',
+    'D': 'right',
+    'V': 'right',
+    'I': 'up',
+    'S': 'right',
+    'J': 'right',
+    'Q': 'right',
+    'E': 'up',
+    'H': 'up',
+    'F': 'up',
+    'G': 'up',
+    'node': 'right',  # For node, you can set the default value arbitrarily
+    'ground': 'right'  # ground is the same as GND
+}
+
+default_flips = {
+    'GND': 'none',
+    'R': 'none',
+    'C': 'none',
+    'L': 'none',
+    'D': 'none',
+    'V': 'none',
+    'I': 'none',
+    'S': 'none',
+    'J': 'none',
+    'Q': 'none',
+    'E': 'none',
+    'H': 'none',
+    'F': 'none',
+    'G': 'none',
+    'node': 'none',
+    'ground': 'none'
+}
 
 component_map = {
     'GND': elm.Ground,
@@ -48,154 +88,6 @@ component_map = {
     'node': elm.Dot
 }
 
-default_directions = {
-    'GND': 'right',  # In this library, the default direction of ground is right
-    'R': 'right',
-    'C': 'right',
-    'L': 'right',
-    'D': 'right',
-    'V': 'up',
-    'I': 'up',
-    'S': 'right',
-    'J': 'right',
-    'Q': 'right',
-    'E': 'right',
-    'H': 'right',
-    'F': 'right',
-    'G': 'right',
-    'node': 'right',  # For node, you can set the default value arbitrarily
-    'ground': 'right'  # ground is the same as GND
-}
-
-
-def set_element_direction(element, direction):
-    print(f"[DEBUG] set_element_direction called with direction={direction}")
-    if direction == 'up':
-        print("[DEBUG] direction=up -> element.up()")
-        element.up()
-    elif direction == 'down':
-        print("[DEBUG] direction=down -> element.down()")
-        element.down()
-    elif direction == 'left':
-        print("[DEBUG] direction=left -> element.left()")
-        element.left()
-    else:
-        print("[DEBUG] direction=right (default) -> element.right()")
-        element.right()
-
-def rotate_90_ccw(x, y, cx, cy):
-    x_new = cx - (y - cy)
-    y_new = cy + (x - cx)
-    return x_new, y_new
-
-def rotate_180(x, y, cx, cy):
-    x_new = 2 * cx - x
-    y_new = 2 * cy - y
-    return x_new, y_new
-
-def rotate_270_ccw(x, y, cx, cy):
-    x_new = cx + (y - cy)
-    y_new = cy - (x - cx)
-    return x_new, y_new
-
-def get_component_bbox(component_type,
-                       pos=(1, 2),
-                       direction='right',
-                       shrink_size=0.1,
-                       **kwargs):
-    comp_class = component_map.get(component_type, None)
-    if comp_class is None:
-        raise ValueError(f"Unsupported component type: {component_type}")
-
-    with schemdraw.Drawing(show=False) as d:
-
-        element = comp_class(**kwargs).at(pos)
-        # 应用方向
-        set_element_direction(element, direction)
-        element = d.add(element)
-        print("This is the parameters for this device:" + str(element.theta) + "----------------------------------------"+str(direction))
-
-        if 'start' in element.anchors:
-            ref_anchor_name = 'start'
-        elif 'source' in element.anchors:
-            ref_anchor_name = 'source'
-        else:
-            ref_anchor_name = list(element.anchors.keys())[0]
-
-        abs_ref = element.absanchors[ref_anchor_name]
-        local_ref = element.anchors[ref_anchor_name]
-
-        if isinstance(local_ref, (tuple, list)):
-            xDiff = abs_ref.x - local_ref[0]
-            yDiff = abs_ref.y - local_ref[1]
-        else:
-            xDiff = abs_ref.x - local_ref.x
-            yDiff = abs_ref.y - local_ref.y
-
-        bbox_local = element.get_bbox()
-        xmin_global = xDiff + bbox_local.xmin
-        xmax_global = xDiff + bbox_local.xmax
-        ymin_global = yDiff + bbox_local.ymin
-        ymax_global = yDiff + bbox_local.ymax
-
-        if component_type in ['GND', 'ground']:
-            ymax_global -= shrink_size
-        elif component_type in ['R', 'C', 'L', 'D', 'V', 'I', 'E', 'H', 'F', 'G', 'S']:
-            xmin_global += shrink_size
-            xmax_global -= shrink_size
-        elif component_type == 'J':
-            xmax_global -= shrink_size
-            ymin_global += shrink_size
-            ymax_global -= shrink_size
-            # prevent wire crossing the junction field-effect transistor.
-            xmin_global -= shrink_size
-        elif component_type == 'Q':
-            xmin_global += shrink_size
-            ymin_global += shrink_size
-            ymax_global -= shrink_size
-            # prevent wire crossing the bipolar transistor.
-            xmax_global += shrink_size
-
-        anchors_global = {k: (v.x, v.y) for k, v in element.absanchors.items()}
-        bbox = {
-            'xmin': xmin_global,
-            'ymin': ymin_global,
-            'xmax': xmax_global,
-            'ymax': ymax_global
-        }
-        print("before bbox:", bbox)
-
-        # Get all vertices of the rectangle
-        vertices = [
-            (bbox['xmin'], bbox['ymin']),
-            (bbox['xmax'], bbox['ymin']),
-            (bbox['xmax'], bbox['ymax']),
-            (bbox['xmin'], bbox['ymax'])
-        ]
-
-        print("pos:", pos)
-        (x_center, y_center) = pos
-        # Rotate each vertex
-        if direction == 'up':
-            rotated_vertices = [rotate_90_ccw(x, y, x_center, y_center) for x, y in vertices]
-        elif direction == 'left':
-            rotated_vertices = [rotate_180(x, y, x_center, y_center) for x, y in vertices]
-        elif direction == 'down':
-            rotated_vertices = [rotate_270_ccw(x, y, x_center, y_center) for x, y in vertices]
-        else:
-            rotated_vertices = vertices
-        # Find new boundaries
-        rotated_x = [v[0] for v in rotated_vertices]
-        rotated_y = [v[1] for v in rotated_vertices]
-
-        bbox = {
-            'xmin': min(rotated_x),
-            'ymin': min(rotated_y),
-            'xmax': max(rotated_x),
-            'ymax': max(rotated_y)
-        }
-        print("after bbox:", bbox)
-        return bbox, element.anchors, anchors_global
 
 def parse_spice_netlist(netlist):
     components = []
@@ -278,21 +170,24 @@ def parse_spice_netlist(netlist):
 
     return components, commands, subcircuits
 
+
 def netlist_to_xml(components, commands, subcircuits):
     root = ET.Element("spice_netlist")
 
     components_elem = ET.SubElement(root, "components")
     for comp in components:
         comp_elem = ET.SubElement(components_elem, "component", type=comp['type'], id=comp['id'])
-        # 默认direction为right
-        print("type:", comp['type'])
-        comp_direction = default_directions.get(comp['type'], 'right')
-        comp_elem.set("direction", comp_direction)
+        #
         for i, node in enumerate(comp['nodes'], start=1):
             ET.SubElement(comp_elem, f"node{i}").text = node
         ET.SubElement(comp_elem, "value").text = comp['value']
         if 'pins' in comp:
             ET.SubElement(comp_elem, "pins").text = ' '.join(comp['pins'])
+        print("type:", comp['type'])
+        comp_direction = default_directions.get(comp['type'], 'right')
+        comp_elem.set("direction", comp_direction)
+        comp_filp = default_flips.get(comp['type'], 'none')
+        comp_elem.set("flip", comp_filp)  # [NEW CODE] 默认无翻转
 
     subcircuits_elem = ET.SubElement(root, "subcircuits")
     for subckt in subcircuits:
@@ -307,10 +202,12 @@ def netlist_to_xml(components, commands, subcircuits):
 
     return root
 
+
 def pretty_print_xml(element):
     rough_string = ET.tostring(element, 'utf-8')
     reparsed = minidom.parseString(rough_string)
     return reparsed.toprettyxml(indent="  ")
+
 
 def convert_netlist_to_xml_file(netlist, output_filename="spice_netlist.xml"):
     components, commands, subcircuits = parse_spice_netlist(netlist)
@@ -319,6 +216,7 @@ def convert_netlist_to_xml_file(netlist, output_filename="spice_netlist.xml"):
     with open(output_filename, "w") as f:
         f.write(pretty_xml)
     print(pretty_xml)
+
 
 def create_graph_from_xml(xml_root):
     components_element = xml_root.find('components')
@@ -348,7 +246,10 @@ def create_graph_from_xml(xml_root):
 
     return G, components_element
 
-def update_xml_positions_and_directions(xml_root, pos, directions):
+
+def update_xml_positions_and_directions(xml_root, pos, directions, flips=None):
+    if flips is None:
+        flips = {}
     components_elem = xml_root.find('components')
     for comp in components_elem:
         cid = comp.attrib['id']
@@ -358,7 +259,8 @@ def update_xml_positions_and_directions(xml_root, pos, directions):
             comp.set('y', str(y))
         if cid in directions:
             comp.set('direction', directions[cid])
-
+        if cid in flips:  # [NEW CODE] 更新flip
+            comp.set('flip', flips[cid])
     nodes_elem = xml_root.find('nodes')
     if nodes_elem is None:
         nodes_elem = ET.SubElement(xml_root, 'nodes')
@@ -371,6 +273,7 @@ def update_xml_positions_and_directions(xml_root, pos, directions):
         x, y = pos[nid]
         node_elem.set('x', str(x))
         node_elem.set('y', str(y))
+
 
 def add_anchor_dots(d, all_wires):
     anchor_wire_count = {}
@@ -387,6 +290,7 @@ def add_anchor_dots(d, all_wires):
             d.add(elm.Dot(radius=0.12).at(anchor_pos))
             added_dots.add(anchor_pos)
 
+
 def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, EnlargeSize=2.5, routing_method=1, auto=1):
     attempt = 0
     success = False
@@ -397,13 +301,16 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
     # 从xml读取已有的方向和位置
     positions_in_xml = {}
     directions_in_xml = {}
+    flips_in_xml = {}  # [NEW CODE] 读取flip
+
     components_elem = xml_root.find('components')
     if components_elem is not None:
         for comp in components_elem:
             cid = comp.attrib['id']
             dir_val = comp.attrib.get('direction', 'right')
-            print(f"[DEBUG] read direction from XML: component={cid}, direction={dir_val}")
+            flip_val = comp.attrib.get('flip', 'none')  # [NEW CODE] 读取flip属性
             directions_in_xml[cid] = dir_val
+            flips_in_xml[cid] = flip_val  # [NEW CODE]
             if 'x' in comp.attrib and 'y' in comp.attrib:
                 positions_in_xml[cid] = (float(comp.attrib['x']), float(comp.attrib['y']))
 
@@ -423,11 +330,10 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
             pos = {n:(EnlargeSize * original_pos[n][0], EnlargeSize * (-original_pos[n][1])) for n in G.nodes}
 
             directions = {}
+            flips = {}  # [NEW CODE]
             for n in G.nodes:
-                if n in directions_in_xml:
-                    directions[n] = directions_in_xml[n]
-                else:
-                    directions[n] = 'right'  # 默认
+                directions[n] = directions_in_xml.get(n, 'right')
+                flips[n] = flips_in_xml.get(n, 'none')  # [NEW CODE]
 
             d = schemdraw.Drawing()
             elements = {}
@@ -439,14 +345,17 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
             for node in G.nodes:
                 node_info = G.nodes[node]
                 x, y = pos[node]
-                direction = directions[node] if node in directions else 'right'
-                print(f"[DEBUG] draw_component_or_node: node={node}, direction={direction}")
-                draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G)
+                direction = directions.get(node, 'right')
+                flip_in_xml = flips.get(node, 'none')  # [NEW CODE]
+                print(f"[DEBUG] draw_component_or_node: node={node}, direction={direction}, flip={flip_in_xml}")
+                draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G,
+                                       flip=flip_in_xml)
 
             component_polygons = [comp_info['polygon'] for comp_info in component_boxes.values()]
             spatial_index = STRtree(component_polygons)
 
-            draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method, spatial_index, all_wires)
+            draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method,
+                             spatial_index, all_wires)
 
             any_red_line = any(wire['color'] == wire_danger_color for wire in all_wires)
             overlapping = check_overlapping_wires(all_wires)
@@ -464,7 +373,7 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
                     d.add(elm.Line().at(line.coords[0]).to(line.coords[1]).color(color))
                 add_anchor_dots(d, all_wires)
                 print(f"[DEBUG] Successful layout after {attempt} attempts.")
-                update_xml_positions_and_directions(xml_root, pos, directions)
+                update_xml_positions_and_directions(xml_root, pos, directions, flips)  # [NEW CODE] 同时更新flip
                 tree = ET.ElementTree(xml_root)
                 tree.write(xml_file)
                 d.draw()
@@ -475,7 +384,7 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
             print("[DEBUG] No suitable layout found after all attempts. Showing last attempt with issues.")
             d = schemdraw.Drawing()
             if last_pos is not None and last_all_wires is not None:
-                update_xml_positions_and_directions(xml_root, last_pos, directions_in_xml)
+                update_xml_positions_and_directions(xml_root, last_pos, directions_in_xml, flips_in_xml)
                 tree = ET.ElementTree(xml_root)
                 tree.write(xml_file)
 
@@ -487,8 +396,10 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
                     node_info = G.nodes[node]
                     x, y = last_pos[node]
                     direction = directions_in_xml[node] if node in directions_in_xml else 'right'
-                    print(f"[DEBUG] Redraw last attempt: node={node}, direction={direction}")
-                    draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G)
+                    flip_in_xml = flips_in_xml.get(node, 'none') # [NEW CODE]
+                    print(f"[DEBUG] Redraw last attempt: node={node}, direction={direction}, flip={flip_in_xml}")
+                    draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G,
+                                           flip=flip_in_xml)
 
                 for wire_info in last_all_wires:
                     line = wire_info['line']
@@ -498,10 +409,11 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
                 add_anchor_dots(d, last_all_wires)
                 d.draw()
     else:
-        # auto=0 使用固定位置和direction
+        # auto=0 使用固定位置和direction和flip
         if positions_in_xml:
             pos = positions_in_xml
             directions = directions_in_xml
+            flips = flips_in_xml
             attempt = 0
             success = False
             last_all_wires = None
@@ -522,14 +434,17 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
                         print(f"[DEBUG] No position for node {node}")
                         continue
                     x, y = pos[node]
-                    direction = directions[node] if node in directions else 'right'
-                    print(f"[DEBUG] draw_component_or_node (fixed): node={node}, direction={direction}")
-                    draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G)
+                    direction = directions.get(node, 'right')
+                    flip_in_xml = flips.get(node, 'none')  # [NEW CODE]
+                    print(f"[DEBUG] draw_component_or_node (fixed): node={node}, direction={direction}, flip={flip_in_xml}")
+                    draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G,
+                                           flip=flip_in_xml)
 
                 component_polygons = [comp_info['polygon'] for comp_info in component_boxes.values()]
                 spatial_index = STRtree(component_polygons)
 
-                draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method, spatial_index, all_wires)
+                draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method,
+                                 spatial_index, all_wires)
 
                 any_red_line = any(wire['color'] == wire_danger_color for wire in all_wires)
                 overlapping = check_overlapping_wires(all_wires)
@@ -564,9 +479,10 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
                     if node not in pos:
                         continue
                     x, y = pos[node]
-                    direction = directions[node] if node in directions else 'right'
-                    print(f"[DEBUG] Redraw last attempt (fixed): node={node}, direction={direction}")
-                    draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G)
+                    direction = directions.get(node, 'right')
+                    flip_in_xml = flips.get(node, 'none') # [NEW CODE]
+                    print(f"[DEBUG] Redraw last attempt (fixed): node={node}, direction={direction}, flip={flip_in_xml}")
+                    draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G, flip=flip_in_xml)
 
                 if last_all_wires is not None:
                     for wire_info in last_all_wires:
@@ -581,7 +497,197 @@ def draw_circuit(G, components_element, xml_root, xml_file, max_attempts=100, En
         else:
             print("[DEBUG] No positions found in XML. Please run with auto=1 first.")
 
-def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G):
+
+def set_element_direction(element, direction):
+    print(f"[DEBUG] set_element_direction called with direction={direction}")
+    if direction == 'up':
+        print("[DEBUG] direction=up -> element.up()")
+        element.up()
+    elif direction == 'down':
+        print("[DEBUG] direction=down -> element.down()")
+        element.down()
+    elif direction == 'left':
+        print("[DEBUG] direction=left -> element.left()")
+        element.left()
+    else:
+        print("[DEBUG] direction=right (default) -> element.right()")
+        element.right()
+
+
+def rotate_ccw(x, y, cx, cy, theta=0):
+    # Convert the angle theta to radians
+    rad = math.radians(theta)
+    # rotate the point (x, y) counterclockwise by theta degrees around the point (cx, cy)
+    x_new = (x - cx) * math.cos(rad) - (y - cy) * math.sin(rad) + cx
+    y_new = (x - cx) * math.sin(rad) + (y - cy) * math.cos(rad) + cy
+    return x_new, y_new
+
+
+def flip_component(points, flip_point, mode="horizontal"):
+    """
+    根据给定点对长方形进行水平或垂直翻转。
+
+    :param points: 长方形的四个顶点 [(x1, y1), (x2, y2), (x3, y3), (x4, y4)]
+    :param flip_point: 翻转点 (xf, yf)
+    :param mode: 翻转模式 "horizontal" 或 "vertical"
+    :return: 翻转后的新顶点 [(x1', y1'), (x2', y2'), (x3', y3'), (x4', y4')]
+    """
+    xf, yf = flip_point
+    flipped_points = []
+
+    for x, y in points:
+        if mode == "horizontal":  # 水平翻转
+            new_x = 2 * xf - x
+            new_y = y
+        elif mode == "vertical":  # 垂直翻转
+            new_x = x
+            new_y = 2 * yf - y
+        else:
+            new_x = x
+            new_y = y
+        flipped_points.append((new_x, new_y))
+
+    return flipped_points
+
+
+
+def get_component_bbox(component_type,
+                       pos=(1, 2),
+                       direction='right',
+                       shrink_size=0.1, flip='none',
+                       **kwargs):
+    comp_class = component_map.get(component_type, None)
+    if comp_class is None:
+        raise ValueError(f"Unsupported component type: {component_type}")
+
+    d = schemdraw.Drawing(show=False)
+    element = comp_class(**kwargs).at(pos)
+    # 应用方向
+    set_element_direction(element, direction)
+    element = d.add(element)
+    print("This is the parameters for this device:" + str(element.theta) + "----------------------------------------"+str(direction))
+
+    # rotational point
+    if 'start' in element.anchors:
+        ref_anchor_name = 'start'
+    elif 'drain' in element.anchors:
+        ref_anchor_name = 'drain'
+    elif 'base' in element.anchors:
+        ref_anchor_name = 'base'
+    else:
+        ref_anchor_name = list(element.anchors.keys())[0]
+
+    abs_ref = element.absanchors[ref_anchor_name]
+    local_ref = element.anchors[ref_anchor_name]
+
+    if isinstance(local_ref, (tuple, list)):
+        xDiff = abs_ref.x - local_ref[0]
+        yDiff = abs_ref.y - local_ref[1]
+    else:
+        xDiff = abs_ref.x - local_ref.x
+        yDiff = abs_ref.y - local_ref.y
+
+    bbox_local = element.get_bbox()
+    xmin_global = xDiff + bbox_local.xmin
+    xmax_global = xDiff + bbox_local.xmax
+    ymin_global = yDiff + bbox_local.ymin
+    ymax_global = yDiff + bbox_local.ymax
+
+    if component_type in ['GND', 'ground']:
+        ymax_global -= shrink_size
+    elif component_type in ['R', 'C', 'L', 'D', 'V', 'I', 'E', 'H', 'F', 'G', 'S']:
+        xmin_global += shrink_size
+        xmax_global -= shrink_size
+    elif component_type == 'J':
+        xmax_global -= shrink_size
+        ymin_global += shrink_size
+        ymax_global -= shrink_size
+        # prevent wire crossing the junction field-effect transistor.
+        xmin_global -= shrink_size * 3
+    elif component_type == 'Q':
+        xmin_global += shrink_size
+        ymin_global += shrink_size
+        ymax_global -= shrink_size
+        # prevent wire crossing the bipolar transistor.
+        xmax_global += shrink_size * 3
+
+    anchors_global = {k: (v.x, v.y) for k, v in element.absanchors.items()}
+    bbox = {
+        'xmin': xmin_global,
+        'ymin': ymin_global,
+        'xmax': xmax_global,
+        'ymax': ymax_global
+    }
+    print("before bbox:", bbox)
+
+    # Get all vertices of the rectangle
+    vertices = [
+        (bbox['xmin'], bbox['ymin']),
+        (bbox['xmax'], bbox['ymin']),
+        (bbox['xmax'], bbox['ymax']),
+        (bbox['xmin'], bbox['ymax'])
+    ]
+
+    print("pos:", pos)
+    (x_center, y_center) = pos
+    # Rotate each vertex
+    if direction == 'up':
+        rotated_vertices = [rotate_ccw(x, y, x_center, y_center,90) for x, y in vertices]
+    elif direction == 'left':
+        rotated_vertices = [rotate_ccw(x, y, x_center, y_center,180) for x, y in vertices]
+    elif direction == 'down':
+        rotated_vertices = [rotate_ccw(x, y, x_center, y_center,270) for x, y in vertices]
+    else:
+        rotated_vertices = vertices
+    # Find new boundaries
+    rotated_x = [v[0] for v in rotated_vertices]
+    rotated_y = [v[1] for v in rotated_vertices]
+
+    bbox = {
+        'xmin': min(rotated_x),
+        'ymin': min(rotated_y),
+        'xmax': max(rotated_x),
+        'ymax': max(rotated_y)
+    }
+    print("after bbox:", bbox)
+
+    # Get all vertices of the rectangle
+    rotated_vertices = [
+        (bbox['xmin'], bbox['ymin']),
+        (bbox['xmax'], bbox['ymin']),
+        (bbox['xmax'], bbox['ymax']),
+        (bbox['xmin'], bbox['ymax'])
+    ]
+
+    print("rotated_vertices:", rotated_vertices)
+    if component_type in ['J']:
+        flipped_vertices = flip_component(rotated_vertices, (x_center, y_center), mode=flip)
+    elif component_type in ['Q']:
+        if flip == 'horizontal':
+            collector = element.absanchors['collector']
+            x_collect, y_collect = collector.x, collector.y
+            flipped_vertices = flip_component(rotated_vertices, (x_collect, y_collect), mode=flip)
+        elif flip == 'vertical':
+            flipped_vertices = flip_component(rotated_vertices, (x_center, y_center), mode=flip)
+        else:
+            flipped_vertices = rotated_vertices
+
+        # Find new boundaries
+        rotated_x = [v[0] for v in flipped_vertices]
+        rotated_y = [v[1] for v in flipped_vertices]
+
+        bbox = {
+            'xmin': min(rotated_x),
+            'ymin': min(rotated_y),
+            'xmax': max(rotated_x),
+            'ymax': max(rotated_y)
+        }
+        print("flipped bbox:", bbox)
+    print("anchors_global:", anchors_global)
+    return bbox, element.anchors, anchors_global
+
+
+def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G, flip='none'):
     ctype = node_info.get('type')
     if ctype is None:
         ctype = 'node'
@@ -604,7 +710,8 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
         ctype_for_bbox = ctype
 
     print(f"[DEBUG] get_component_bbox: node={node}, ctype={ctype_for_bbox}, direction={direction}")
-    bbox, anchors_local, anchors_global = get_component_bbox(ctype_for_bbox, pos=(x, y), direction=direction, shrink_size=shrink_size)
+    bbox, anchors_local, anchors_global = get_component_bbox(ctype_for_bbox, pos=(x, y), direction=direction,
+                                                             shrink_size=shrink_size, flip=flip)
     label_text = f"{node}\n{node_info.get('value','')}"
 
     comp_class = component_map.get(ctype_for_bbox, elm.Dot)
@@ -612,20 +719,22 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
     element = comp_class().at((x, y))
     # 应用方向
     set_element_direction(element, direction)
+    # 设置翻转
+    if flip == 'horizontal':
+        element.reverse()  # 水平镜像
+    elif flip == 'vertical':
+        element.flip()  # 垂直镜像
+    else:
+        element = element
+
+    print("flip:", flip)
     element.label(label_text)
     element = d.add(element)
 
-
-    if ctype in ['E', 'H']:
-        pins[node] = {'start': element.absanchors['end'],'end': element.absanchors['start']}
-    elif ctype in ['F', 'G']:
-        pins[node] = {'start': element.absanchors['end'],'end': element.absanchors['start']}
-    elif ctype in ['R', 'C', 'L']:
+    if ctype in ['V', 'I', 'E', 'H', 'F', 'G']:
+        pins[node] = {'positive': element.absanchors['end'], 'negative': element.absanchors['start']}
+    elif ctype in ['R', 'C', 'L', 'S']:
         pins[node] = {'start': element.absanchors['start'], 'end': element.absanchors['end']}
-    elif ctype == 'V':
-        pins[node] = {'positive': element.absanchors['end'], 'negative': element.absanchors['start']}
-    elif ctype == 'I':
-        pins[node] = {'positive': element.absanchors['end'], 'negative': element.absanchors['start']}
     elif ctype == 'D':
         pins[node] = {'anode': element.absanchors['start'], 'cathode': element.absanchors['end']}
     elif ctype == 'J':
@@ -642,8 +751,6 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
         }
     elif ctype == 'ground':
         pins[node] = {'pin': (x, y)}
-    elif ctype == 'S':
-        pins[node] = {'start': element.absanchors['start'], 'end': element.absanchors['end']}
     elif ctype == 'node':
         pins[node] = {'pin': (x, y)}
     else:
@@ -655,6 +762,7 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
         'polygon': Polygon([(x_min, y_min), (x_max, y_min),(x_max, y_max),(x_min, y_max)]),
         'type': ctype
     }
+
 
 def check_overlapping_wires(all_wires):
     overlapping = False
@@ -668,6 +776,7 @@ def check_overlapping_wires(all_wires):
                 all_wires[i]['color'] = wire_danger_color
                 all_wires[j]['color'] = wire_danger_color
     return overlapping
+
 
 def draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method, spatial_index, all_wires):
     for comp, neighbor in G.edges():
@@ -702,6 +811,7 @@ def draw_connections(d, G, components_element, pins, component_boxes, drawn_edge
 
         drawn_edges.add(edge_key)
 
+
 def route_connection_current_method(start_pos, end_pos, component_boxes, comp, neighbor, all_wires):
     path1 = [start_pos, (end_pos[0], start_pos[1]), end_pos]
     path2 = [start_pos, (start_pos[0], end_pos[1]), end_pos]
@@ -725,6 +835,7 @@ def route_connection_current_method(start_pos, end_pos, component_boxes, comp, n
 
     return path1, wire_danger_color
 
+
 def is_wire_crossing_components(start_pos, end_pos, component_boxes, comp, neighbor):
     line = LineString([start_pos, end_pos])
     line_start_point = Point(start_pos)
@@ -738,6 +849,7 @@ def is_wire_crossing_components(start_pos, end_pos, component_boxes, comp, neigh
             else:
                 return True
     return False
+
 
 def get_component_pin(comp, neighbor, comp_info, components_element, pins):
     ctype = comp_info.get('type')
@@ -773,7 +885,7 @@ def get_component_pin(comp, neighbor, comp_info, components_element, pins):
             if node_ == neighbor:
                 return pin
 
-    elif ctype in ['V', 'I']:
+    elif ctype in ['V', 'I','E', 'H', 'F', 'G']:
         component = next(c for c in components_element if c.attrib['id'] == comp)
         node1 = component.find('node1').text
         node2 = component.find('node2').text
@@ -809,56 +921,36 @@ def get_component_pin(comp, neighbor, comp_info, components_element, pins):
         if neighbor in node_mapping:
             return node_mapping[neighbor]
 
-    elif ctype in ['E', 'H', 'F', 'G']:
-        if 'start' in pins[comp] and 'end' in pins[comp]:
-            component = next(c for c in components_element if c.attrib['id'] == comp)
-            node1 = component.find('node1').text
-            node2 = component.find('node2').text
-            if neighbor == node1:
-                return 'start'
-            elif neighbor == node2:
-                return 'end'
     else:
         return 'pin'
 
     return None
 
+
 def get_pin_position(pins, comp, pin_name):
     try:
         pos = pins[comp][pin_name]
-        if isinstance(pos, schemdraw.util.Point):
-            return (pos.x, pos.y)
+        if hasattr(pos, 'x') and hasattr(pos, 'y'):
+            return pos.x, pos.y
         else:
             return pos
     except KeyError:
         print(f"Pin {pin_name} not found for component {comp}")
         return None
 
+
 def get_node_coordinate(pins, node):
-    if node in pins and 'pin' in pins[node]:
-        return pins[node]['pin']
-    elif node in pins and 'positive' in pins[node]:
-        return pins[node]['positive']
-    elif node in pins and 'negative' in pins[node]:
-        return pins[node]['negative']
-    elif node in pins and 'anode' in pins[node]:
-        return pins[node]['anode']
-    elif node in pins and 'cathode' in pins[node]:
-        return pins[node]['cathode']
-    elif node in pins and 'drain' in pins[node]:
-        return pins[node]['drain']
-    elif node in pins and 'gate' in pins[node]:
-        return pins[node]['gate']
-    elif node in pins and 'source' in pins[node]:
-        return pins[node]['source']
-    elif node in pins and 'collector' in pins[node]:
-        return pins[node]['collector']
-    elif node in pins and 'base' in pins[node]:
-        return pins[node]['base']
-    elif node in pins and 'emitter' in pins[node]:
-        return pins[node]['emitter']
-    else:
-        return None
+    # Try to find the coordinate corresponding to the node from pins
+    pin_candidates = ['pin', 'positive', 'negative', 'anode', 'cathode', 'drain', 'gate', 'source', 'collector', 'base', 'emitter']
+    if node in pins:
+        for pc in pin_candidates:
+            if pc in pins[node]:
+                pos = pins[node][pc]
+                if hasattr(pos, 'x') and hasattr(pos, 'y'):
+                    return pos.x, pos.y
+                return pos
+    return None
+
 
 if __name__ == "__main__":
     if auto == 1:

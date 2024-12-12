@@ -9,24 +9,66 @@ import xml.dom.minidom as minidom
 import math
 
 netlist = """
-*Common-base BJT amplifier 
-vsupply 1 0 dc 24 
-vin 0 4 dc 
-rc 1 2 800 
-re 3 4 100 
-q1 2 0 3 mod1 
-.model mod1 npn bf=50 
-.dc vin 0 5 0.1 
-.print dc v(2,3) 
-.plot dc v(2,3) 
-.end 
+* SPICE Netlist Example
+* Contains NPN BJT (Q1) and N-JFET (J1)
+
+* Node naming:
+* 0   = ground
+* VCC = power supply node
+* C1  = BJT collector node
+* E1  = BJT emitter node
+* B1  = BJT base node
+* C2  = JFET drain node
+* G2  = JFET gate node
+
+********************************
+*** Power supply and reference ***
+V_SUP VCC 0 DC 12V      ; Power supply voltage source, V_SUP is the device name, VCC is the node name
+* Ground (0) connection count: V_SUP, J1 source, RE resistor — total 3 connections
+
+********************************
+*** BJT Section (NPN) ***
+Q1 C1 B1 E1 QNPN        ; Q1 is the device name, nodes are C1, B1, E1
+R1 VCC C1 10k            ; Load resistor from VCC to C1
+RE E1 0 1k               ; Emitter-to-ground resistor
+Rb B1 VCC 100k           ; Base bias resistor from B1 to VCC
+
+* Node check:
+* VCC: connected to V_SUP, R1, R2 (to be added), Rb → total 4
+* B1: connected to Q1, Rb, Rg (to be added) → total 3
+* E1: connected to Q1, RE → total 2
+* C1: connected to Q1, R1 → total 2
+* 0:  connected to V_SUP, RE, J1 source → total 3
+
+********************************
+*** JFET Section (NJF) ***
+J1 C2 G2 0 QJFETN        ; J1 is the device name, C2 = drain, G2 = gate, source = ground
+R2 VCC C2 10k            ; Load resistor from VCC to C2
+Rg G2 B1 1Meg            ; Bias resistor from G2 to B1
+
+* Node check:
+* C2: connected to J1, R2 → total 2
+* G2: connected to J1, Rg → total 2
+* B1: re-check: Q1, Rb, Rg → total 3
+
+********************************
+*** Device model definitions ***
+.model QNPN NPN (BF=100 IS=1e-14 VAF=100)
+.model QJFETN NJF (BETA=1e-4 VTO=-2.0 LAMBDA=0.02)
+
+********************************
+*** Simulation control ***
+.op
+.end
+
+
 
 """
 
-EnlargeSize = 8
-max_attempts = 100
+EnlargeSize = 10
+max_attempts = 300
 routing_method = 1
-auto = 0
+auto = 1
 shrink_size = 0.05
 wire_safe_color = 'green'
 wire_danger_color = 'red'
@@ -37,7 +79,7 @@ default_directions = {
     'C': 'right',
     'L': 'right',
     'D': 'right',
-    'V': 'right',
+    'V': 'up',
     'I': 'up',
     'S': 'right',
     'J': 'right',
@@ -85,7 +127,7 @@ component_map = {
     'F': elm.SourceControlledI,
     'G': elm.SourceControlledI,
     'ground': elm.Ground,
-    'node': elm.Dot
+    'node': elm.Dot(radius=0.12)
 }
 
 
@@ -603,13 +645,13 @@ def get_component_bbox(component_type,
         ymin_global += shrink_size
         ymax_global -= shrink_size
         # prevent wire crossing the junction field-effect transistor.
-        xmin_global -= shrink_size * 3
+        xmin_global -= shrink_size*2
     elif component_type == 'Q':
         xmin_global += shrink_size
         ymin_global += shrink_size
         ymax_global -= shrink_size
         # prevent wire crossing the bipolar transistor.
-        xmax_global += shrink_size * 3
+        xmax_global += shrink_size*2
 
     anchors_global = {k: (v.x, v.y) for k, v in element.absanchors.items()}
     bbox = {
@@ -661,28 +703,47 @@ def get_component_bbox(component_type,
 
     print("rotated_vertices:", rotated_vertices)
     if component_type in ['J']:
+        # because the direction is up or down, so the horizontal flip is the same as the vertical flip
         flipped_vertices = flip_component(rotated_vertices, (x_center, y_center), mode=flip)
+        # Find new boundaries
+        rotated_x = [v[0] for v in flipped_vertices]
+        rotated_y = [v[1] for v in flipped_vertices]
+
     elif component_type in ['Q']:
-        if flip == 'horizontal':
-            collector = element.absanchors['collector']
-            x_collect, y_collect = collector.x, collector.y
-            flipped_vertices = flip_component(rotated_vertices, (x_collect, y_collect), mode=flip)
-        elif flip == 'vertical':
-            flipped_vertices = flip_component(rotated_vertices, (x_center, y_center), mode=flip)
+        # because the direction is up or down, so the horizontal flip is the same as the vertical flip
+        if direction == 'up' or direction == 'down':
+            if flip == 'horizontal':
+                flipped_vertices = flip_component(rotated_vertices, (x_center, y_center), mode=flip)
+                print("flip horizontal")
+            elif flip == 'vertical':
+                collector = element.absanchors['collector']
+                x_collector, y_collector = collector.x, collector.y
+                flipped_vertices = flip_component(rotated_vertices, (x_collector, y_collector), mode=flip)
+                print("flip vertical")
+            else:
+                flipped_vertices = rotated_vertices
+            print("run there")
         else:
-            flipped_vertices = rotated_vertices
+            if flip == 'horizontal':
+                collector = element.absanchors['collector']
+                x_collector, y_collector = collector.x, collector.y
+                flipped_vertices = flip_component(rotated_vertices, (x_collector, y_collector), mode=flip)
+            elif flip == 'vertical':
+                flipped_vertices = flip_component(rotated_vertices, (x_center, y_center), mode=flip)
+            else:
+                flipped_vertices = rotated_vertices
 
         # Find new boundaries
         rotated_x = [v[0] for v in flipped_vertices]
         rotated_y = [v[1] for v in flipped_vertices]
 
-        bbox = {
-            'xmin': min(rotated_x),
-            'ymin': min(rotated_y),
-            'xmax': max(rotated_x),
-            'ymax': max(rotated_y)
-        }
-        print("flipped bbox:", bbox)
+    bbox = {
+        'xmin': min(rotated_x),
+        'ymin': min(rotated_y),
+        'xmax': max(rotated_x),
+        'ymax': max(rotated_y)
+    }
+    print("flipped bbox:", bbox)
     print("anchors_global:", anchors_global)
     return bbox, element.anchors, anchors_global
 
@@ -696,7 +757,7 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
 
     if ctype == 'node':
         if deg >= 3:
-            elements[node] = d.add(elm.Dot().at((x, y)))
+            elements[node] = d.add(elm.Dot(radius=0.12).at((x, y)))
             d.add(elm.Label().at((x, y)).label(node, ofst=0.2))
             pins[node] = {'pin': (x, y)}
         else:
@@ -714,18 +775,28 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
                                                              shrink_size=shrink_size, flip=flip)
     label_text = f"{node}\n{node_info.get('value','')}"
 
-    comp_class = component_map.get(ctype_for_bbox, elm.Dot)
+    comp_class = component_map.get(ctype_for_bbox, elm.Dot(radius=0.12))
 
     element = comp_class().at((x, y))
     # 应用方向
     set_element_direction(element, direction)
-    # 设置翻转
-    if flip == 'horizontal':
-        element.reverse()  # 水平镜像
-    elif flip == 'vertical':
-        element.flip()  # 垂直镜像
+    # because the direction is up or down, so the horizontal flip is the same as the vertical flip
+    print(direction)
+    if direction == 'up' or direction == 'down':
+        if flip == 'horizontal':
+            element.flip()  # vertical flip
+        elif flip == 'vertical':
+            element.reverse()  # horizontal flip
+        else:
+            element = element
+        print("run here-------------------------------------why")
     else:
-        element = element
+        if flip == 'horizontal':
+            element.reverse()  # horizontal flip
+        elif flip == 'vertical':
+            element.flip()  # vertical flip
+        else:
+            element = element
 
     print("flip:", flip)
     element.label(label_text)

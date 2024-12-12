@@ -24,7 +24,7 @@ q1 2 0 3 mod1
 EnlargeSize = 8
 max_attempts = 300
 routing_method = 1
-auto = 0
+auto = 1
 shrink_size = 0.05
 wire_safe_color = 'green'
 wire_danger_color = 'red'

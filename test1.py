@@ -9,63 +9,29 @@ import xml.dom.minidom as minidom
 import math
 
 netlist = """
-* SPICE Netlist Example
-* Contains NPN BJT (Q1) and N-JFET (J1)
 
-* Node naming:
-* 0   = ground
-* VCC = power supply node
-* C1  = BJT collector node
-* E1  = BJT emitter node
-* B1  = BJT base node
-* C2  = JFET drain node
-* G2  = JFET gate node
+*Q1 in in 0 N90 W=1u L=90n
+*Q2 out in 0 N90 W=1u L=90n
+Q1 d1 d1 0 N90 W=1u L=90n
+Q2 d2 d1 0 N90 W=1u L=90n
+Q3 in in d1 N90 W=1u L=90n
+Q4 out in d2 N90 W=1u L=90n
 
-********************************
-*** Power supply and reference ***
-V_SUP VCC 0 DC 12V      ; Power supply voltage source, V_SUP is the device name, VCC is the node name
-* Ground (0) connection count: V_SUP, J1 source, RE resistor — total 3 connections
 
-********************************
-*** BJT Section (NPN) ***
-Q1 C1 B1 E1 QNPN        ; Q1 is the device name, nodes are C1, B1, E1
-R1 VCC C1 10k            ; Load resistor from VCC to C1
-RE E1 0 1k               ; Emitter-to-ground resistor
-Rb B1 VCC 100k           ; Base bias resistor from B1 to VCC
+Iin vdd in 10u
 
-* Node check:
-* VCC: connected to V_SUP, R1, R2 (to be added), Rb → total 4
-* B1: connected to Q1, Rb, Rg (to be added) → total 3
-* E1: connected to Q1, RE → total 2
-* C1: connected to Q1, R1 → total 2
-* 0:  connected to V_SUP, RE, J1 source → total 3
+Vdd vdd D0 C 1.8
+Vin out 0 DC 1.8
 
-********************************
-*** JFET Section (NJF) ***
-J1 C2 G2 0 QJFETN        ; J1 is the device name, C2 = drain, G2 = gate, source = ground
-R2 VCC C2 10k            ; Load resistor from VCC to C2
-Rg G2 B1 1Meg            ; Bias resistor from G2 to B1
+.dc Iin 0 10u 0.1u
 
-* Node check:
-* C2: connected to J1, R2 → total 2
-* G2: connected to J1, Rg → total 2
-* B1: re-check: Q1, Rb, Rg → total 3
+.options savecurrents
 
-********************************
-*** Device model definitions ***
-.model QNPN NPN (BF=100 IS=1e-14 VAF=100)
-.model QJFETN NJF (BETA=1e-4 VTO=-2.0 LAMBDA=0.02)
-
-********************************
-*** Simulation control ***
-.op
 .end
-
-
 
 """
 
-EnlargeSize = 10
+EnlargeSize = 15
 max_attempts = 300
 routing_method = 1
 auto = 1
@@ -83,7 +49,7 @@ default_directions = {
     'I': 'up',
     'S': 'right',
     'J': 'right',
-    'Q': 'right',
+    'Q': 'down',
     'E': 'up',
     'H': 'up',
     'F': 'up',
@@ -102,7 +68,7 @@ default_flips = {
     'I': 'none',
     'S': 'none',
     'J': 'none',
-    'Q': 'none',
+    'Q': 'vertical',
     'E': 'none',
     'H': 'none',
     'F': 'none',
@@ -266,7 +232,7 @@ def create_graph_from_xml(xml_root):
         print("No components found in XML.")
         raise ValueError("No components found in XML.")
 
-    G = nx.Graph()
+    G = nx.MultiGraph()
 
     for component in components_element:
         ctype = component.attrib['type']
@@ -850,8 +816,11 @@ def check_overlapping_wires(all_wires):
 
 
 def draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method, spatial_index, all_wires):
-    for comp, neighbor in G.edges():
-        edge_key = tuple(sorted([comp, neighbor]))
+    for comp, neighbor, key in G.edges(keys=True):
+        edge_nodes = tuple(sorted([comp, neighbor]))
+        # 在 edge_key 中加入 key，从而区分多重边
+        edge_key = edge_nodes + (key,)
+        print("edge_key:", edge_key)
         if edge_key in drawn_edges:
             continue
 
@@ -859,8 +828,9 @@ def draw_connections(d, G, components_element, pins, component_boxes, drawn_edge
         neighbor_info = G.nodes[neighbor]
 
         comp_pin = get_component_pin(comp, neighbor, comp_info, components_element, pins)
+        print("comp_pin: "+str(comp_pin))
         neighbor_pin = get_component_pin(neighbor, comp, neighbor_info, components_element, pins)
-
+        print("neighbor_pin"+str(neighbor_pin))
         if comp_pin is None or neighbor_pin is None:
             continue
 
@@ -922,8 +892,12 @@ def is_wire_crossing_components(start_pos, end_pos, component_boxes, comp, neigh
     return False
 
 
+from collections import defaultdict
+
+
 def get_component_pin(comp, neighbor, comp_info, components_element, pins):
     ctype = comp_info.get('type')
+
     if ctype in ['R', 'C', 'L', 'S']:
         comp_pins = ['start', 'end']
         comp_pin_coords = {pin: pins[comp][pin] for pin in comp_pins}
@@ -952,47 +926,72 @@ def get_component_pin(comp, neighbor, comp_info, components_element, pins):
         else:
             pin_node_pairs = [('start', node2), ('end', node1)]
 
+        # 将 pin_node_pairs 转化为 node->pins 列表映射
+        node_mapping = defaultdict(list)
         for pin, node_ in pin_node_pairs:
-            if node_ == neighbor:
-                return pin
+            node_mapping[node_].append(pin)
 
-    elif ctype in ['V', 'I','E', 'H', 'F', 'G']:
+        if neighbor in node_mapping and node_mapping[neighbor]:
+            return node_mapping[neighbor].pop(0)
+
+    elif ctype in ['V', 'I', 'E', 'H', 'F', 'G']:
         component = next(c for c in components_element if c.attrib['id'] == comp)
         node1 = component.find('node1').text
         node2 = component.find('node2').text
-        if neighbor == node1:
-            return 'positive'
-        elif neighbor == node2:
-            return 'negative'
+        # 使用列表方式存储映射
+        node_mapping = defaultdict(list)
+        node_mapping[node1].append('positive')
+        node_mapping[node2].append('negative')
+
+        if neighbor in node_mapping and node_mapping[neighbor]:
+            return node_mapping[neighbor].pop(0)
 
     elif ctype == 'D':
         component = next(c for c in components_element if c.attrib['id'] == comp)
         node1 = component.find('node1').text
         node2 = component.find('node2').text
-        if neighbor == node1:
-            return 'anode'
-        elif neighbor == node2:
-            return 'cathode'
+        node_mapping = defaultdict(list)
+        node_mapping[node1].append('anode')
+        node_mapping[node2].append('cathode')
+
+        if neighbor in node_mapping and node_mapping[neighbor]:
+            return node_mapping[neighbor].pop(0)
 
     elif ctype == 'J':
         component = next(c for c in components_element if c.attrib['id'] == comp)
         node_drain = component.find('node1').text
         node_gate = component.find('node2').text
         node_source = component.find('node3').text
-        node_mapping = {node_drain: 'drain', node_gate: 'gate', node_source: 'source'}
-        if neighbor in node_mapping:
-            return node_mapping[neighbor]
+        node_mapping = defaultdict(list)
+        node_mapping[node_drain].append('drain')
+        node_mapping[node_gate].append('gate')
+        node_mapping[node_source].append('source')
+
+        if neighbor in node_mapping and node_mapping[neighbor]:
+            return node_mapping[neighbor].pop(0)
 
     elif ctype == 'Q':
         component = next(c for c in components_element if c.attrib['id'] == comp)
         node_collector = component.find('node1').text
+        print("node_collector:", node_collector)
         node_base = component.find('node2').text
+        print("node_base:", node_base)
         node_emitter = component.find('node3').text
-        node_mapping = {node_collector: 'collector', node_base: 'base', node_emitter: 'emitter'}
-        if neighbor in node_mapping:
-            return node_mapping[neighbor]
+        print("node_emitter:", node_emitter)
+
+        # 使用列表来存储映射
+        node_mapping = defaultdict(list)
+        node_mapping[node_collector].append('collector')
+        node_mapping[node_base].append('base')
+        node_mapping[node_emitter].append('emitter')
+        print("node_mapping:", node_mapping)
+
+        if neighbor in node_mapping and node_mapping[neighbor]:
+            # 弹出第一个可用的 pin
+            return node_mapping[neighbor].pop(0)
 
     else:
+        # 通用情况
         return 'pin'
 
     return None

@@ -42,7 +42,7 @@ shrink_size = 0.05
 wire_safe_color = 'green'
 wire_danger_color = 'red'
 grid_size = 0.1  # Define the grid size
-draw_grid_or_not = 0  # Set to 1 to draw grid, 0 to not draw grid
+draw_grid_or_not = 1  # Set to 1 to draw grid, 0 to not draw grid
 
 # Default Directions and Flips
 default_directions = {
@@ -96,8 +96,8 @@ default_scaling_ratios = {
     'I': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
     'S': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
     'J': {'vertical_scale': 6/5, 'horizontal_scale': 12/11},       #BBox: xmin=-0.6966666666666667, ymin=-0.6966666666666667, xmax=0.7516666666666666, ymax=0.6966666666666667
-    'Q': {'vertical_scale': 150/209, 'horizontal_scale': 600/451}, #BBox: xmin=-0.6966666666666667, ymin=-0.6966666666666667, xmax=0.7516666666666666, ymax=0.6966666666666667
-    'M': {'vertical_scale': 0.8, 'horizontal_scale': 30/41},       #BBox: xmin=-1.5, ymin=-1.5, xmax=1.3666666666666667, ymax=0 work for 0.1 if vertical is 0.8
+    'Q': {'vertical_scale': 300/209, 'horizontal_scale': 600/451}, #BBox: xmin=-0.6966666666666667, ymin=-0.6966666666666667, xmax=0.7516666666666666, ymax=0.6966666666666667
+    'M': {'vertical_scale': 6/5, 'horizontal_scale': 90/82},       #BBox: xmin=-1.5, ymin=-1.5, xmax=1.3666666666666667, ymax=0 work for 0.1 if vertical is 0.8
     'E': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
     'H': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
     'F': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
@@ -762,7 +762,8 @@ def get_component_bbox(component_type,
                        horizontal_scale=1.0,
                        **kwargs):
     print(
-        f"[DEBUG] Getting bounding box for component type '{component_type}' at position {pos} with direction '{direction}', flip '{flip}', vertical_scale '{vertical_scale}', and horizontal_scale '{horizontal_scale}'")
+        f"[DEBUG] Getting bounding box for component type '{component_type}' at position {pos} with direction "
+        f"'{direction}', flip '{flip}', vertical_scale '{vertical_scale}', and horizontal_scale '{horizontal_scale}'")
     # Handle MOSFETs separately
     if component_type == 'M':
         model = kwargs.get('model', '').upper()
@@ -797,8 +798,7 @@ def get_component_bbox(component_type,
     set_element_direction(element, direction)
     d = schemdraw.Drawing(show=False)
     # Apply scaling
-    element.scalex(horizontal_scale)
-    element.scaley(vertical_scale)
+    element.scalex(horizontal_scale).scaley(vertical_scale)
     print(f"[DEBUG] Applied horizontal scale {horizontal_scale} and vertical scale {vertical_scale} to component.")
 
     element = d.add(element)

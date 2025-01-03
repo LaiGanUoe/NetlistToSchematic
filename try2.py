@@ -36,11 +36,13 @@ Vin out 0 DC 1.8
 # Configuration Parameters
 EnlargeSize = 15
 max_attempts = 300
-routing_method = 1
+routing_method = 1  # Only Manhattan routing is used
 auto = 1  # Set to 0 for fixed positions, 1 for automatic layout
 shrink_size = 0.05
 wire_safe_color = 'green'
 wire_danger_color = 'red'
+grid_size = 0.1  # Define the grid size
+draw_grid_or_not = 0  # Set to 1 to draw grid, 0 to not draw grid
 
 # Default Directions and Flips
 default_directions = {
@@ -83,6 +85,27 @@ default_flips = {
     'ground': 'none'
 }
 
+# Default Scaling Ratios
+default_scaling_ratios = {
+    'GND': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'R': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'C': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'L': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'D': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'V': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'I': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'S': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'J': {'vertical_scale': 6/5, 'horizontal_scale': 12/11},       #BBox: xmin=-0.6966666666666667, ymin=-0.6966666666666667, xmax=0.7516666666666666, ymax=0.6966666666666667
+    'Q': {'vertical_scale': 150/209, 'horizontal_scale': 600/451}, #BBox: xmin=-0.6966666666666667, ymin=-0.6966666666666667, xmax=0.7516666666666666, ymax=0.6966666666666667
+    'M': {'vertical_scale': 0.8, 'horizontal_scale': 30/41},       #BBox: xmin=-1.5, ymin=-1.5, xmax=1.3666666666666667, ymax=0 work for 0.1 if vertical is 0.8
+    'E': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'H': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'F': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'G': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'node': {'vertical_scale': 1.0, 'horizontal_scale': 1.0},
+    'ground': {'vertical_scale': 1.0, 'horizontal_scale': 1.0}
+}
+
 # Component Mapping
 component_map = {
     'GND': elm.Ground,
@@ -103,7 +126,6 @@ component_map = {
     'ground': elm.Ground,
     'node': elm.Dot(radius=0.12)
 }
-
 
 def parse_spice_netlist(netlist):
     print("[DEBUG] Starting to parse netlist...")
@@ -152,7 +174,8 @@ def parse_spice_netlist(netlist):
                         'id': parts[0],
                         'nodes': nodes,
                         'value': value,
-                        'pins': ['drain', 'gate', 'source']
+                        'pins': ['drain', 'gate', 'source'],
+                        'scale': 1.0  # [MODIFIED] Add default scale
                     })
                     print(f"[DEBUG] Added JFET component: {parts[0]}")
                     continue
@@ -166,7 +189,8 @@ def parse_spice_netlist(netlist):
                         'id': parts[0],
                         'nodes': nodes,
                         'value': value,
-                        'pins': ['collector', 'base', 'emitter']
+                        'pins': ['collector', 'base', 'emitter'],
+                        'scale': 1.0  # [MODIFIED] Add default scale
                     })
                     print(f"[DEBUG] Added BJT component: {parts[0]}")
                     continue
@@ -188,8 +212,9 @@ def parse_spice_netlist(netlist):
                         'id': id,
                         'nodes': nodes,
                         'model': model,
-                        'params': params_dict,
-                        'pins': ['drain', 'gate', 'source', 'bulk']
+                        'parameters': params_dict,
+                        'pins': ['drain', 'gate', 'source', 'bulk'],
+                        'scale': 1.0  # [MODIFIED] Add default scale
                     })
                     print(f"[DEBUG] Added MOSFET component: {id}")
                     continue
@@ -203,7 +228,8 @@ def parse_spice_netlist(netlist):
                     'type': first_char,
                     'id': parts[0],
                     'nodes': nodes,
-                    'value': value
+                    'value': value,
+                    'scale': 1.0  # [MODIFIED] Add default scale
                 })
                 print(f"[DEBUG] Added component: {parts[0]} of type {first_char}")
 
@@ -249,9 +275,9 @@ def netlist_to_xml(components, commands, subcircuits):
         if 'value' in comp:
             ET.SubElement(comp_elem, "value").text = comp['value']
         # Add optional parameters for MOSFETs
-        if 'params' in comp:
+        if 'parameters' in comp:
             params_elem = ET.SubElement(comp_elem, "parameters")
-            for key, val in comp['params'].items():
+            for key, val in comp['parameters'].items():
                 ET.SubElement(params_elem, key).text = val
         # Add pins if available
         if 'pins' in comp:
@@ -261,6 +287,10 @@ def netlist_to_xml(components, commands, subcircuits):
         comp_elem.set("direction", comp_direction)
         comp_flip = default_flips.get(comp_type, 'none')
         comp_elem.set("flip", comp_flip)  # Default no flip
+        # [MODIFIED] Add vertical_scale and horizontal_scale from default_scaling_ratios
+        scaling = default_scaling_ratios.get(comp_type, {'vertical_scale': 1.0, 'horizontal_scale': 1.0})
+        comp_elem.set("vertical_scale", str(scaling.get('vertical_scale', 1.0)))
+        comp_elem.set("horizontal_scale", str(scaling.get('horizontal_scale', 1.0)))
 
         print(f"[DEBUG] Converted component {cid} to XML.")
 
@@ -363,10 +393,41 @@ def create_graph_from_xml(xml_root):
     return G, components_element
 
 
-def update_xml_positions_and_directions(xml_root, pos, directions, flips=None):
+def align_to_grid(position, grid_size=1.0):
+    """
+    将给定的位置对齐到最近的网格点。
+
+    :param position: 元组，(x, y) 坐标
+    :param grid_size: 网格大小
+    :return: 对齐后的 (x, y) 坐标
+    """
+    x, y = position
+    aligned_x = round(x / grid_size) * grid_size
+    aligned_y = round(y / grid_size) * grid_size
+    return (aligned_x, aligned_y)
+
+
+def draw_grid(d, grid_size=1.0, grid_extent=20):
+    """
+    在绘图中添加网格线。
+
+    :param d: schemdraw.Drawing 对象
+    :param grid_size: 网格大小
+    :param grid_extent: 网格的范围（正负方向）
+    """
+    for x in np.arange(-grid_extent, grid_extent + grid_size, grid_size):
+        d.add(elm.Line().at((x, -grid_extent)).to((x, grid_extent)).color('lightgray').linewidth(0.3))
+    for y in np.arange(-grid_extent, grid_extent + grid_size, grid_size):
+        d.add(elm.Line().at((-grid_extent, y)).to((grid_extent, y)).color('lightgray').linewidth(0.3))
+    print(f"[DEBUG] Drawn grid with size {grid_size} and extent {grid_extent}.")
+
+
+def update_xml_positions_and_directions(xml_root, pos, directions, flips=None, scaling_ratios=None):
     if flips is None:
         flips = {}
-    print("[DEBUG] Updating XML with positions, directions, and flips...")
+    if scaling_ratios is None:
+        scaling_ratios = {}
+    print("[DEBUG] Updating XML with positions, directions, flips, and scales...")
     components_elem = xml_root.find('components')
     for comp in components_elem:
         cid = comp.attrib['id']
@@ -378,9 +439,15 @@ def update_xml_positions_and_directions(xml_root, pos, directions, flips=None):
         if cid in directions:
             comp.set("direction", directions[cid])
             print(f"[DEBUG] Set direction for {cid}: {directions[cid]}")
-        if cid in flips:  # [NEW CODE] Update flip
+        if cid in flips:
             comp.set("flip", flips[cid])
             print(f"[DEBUG] Set flip for {cid}: {flips[cid]}")
+        if cid in scaling_ratios:
+            scaling = scaling_ratios[cid]
+            comp.set("vertical_scale", str(scaling.get('vertical_scale', 1.0)))
+            comp.set("horizontal_scale", str(scaling.get('horizontal_scale', 1.0)))
+            print(f"[DEBUG] Set vertical_scale for {cid}: {scaling.get('vertical_scale', 1.0)}")
+            print(f"[DEBUG] Set horizontal_scale for {cid}: {scaling.get('horizontal_scale', 1.0)}")
     nodes_elem = xml_root.find('nodes')
     if nodes_elem is None:
         nodes_elem = ET.SubElement(xml_root, 'nodes')
@@ -400,8 +467,8 @@ def update_xml_positions_and_directions(xml_root, pos, directions, flips=None):
 def add_anchor_dots(d, all_wires):
     print("[DEBUG] Adding anchor dots where necessary...")
     anchor_wire_count = {}
-    for w in all_wires:
-        line = w['line']
+    for wire in all_wires:
+        line = wire['line']
         start_pt = line.coords[0]
         end_pt = line.coords[1]
         anchor_wire_count[start_pt] = anchor_wire_count.get(start_pt, 0) + 1
@@ -555,13 +622,15 @@ def get_component_pin(comp, neighbor, comp_info, components_element, pins, pin_m
     return 'pin'
 
 
-def get_pin_position(pins, node, pin_name):
+def get_pin_position(pins, node, pin_name, grid_size=1.0):
     try:
         pos = pins[node][pin_name]
         if isinstance(pos, tuple):
-            return pos
+            aligned_pos = align_to_grid(pos, grid_size=grid_size)
+            return aligned_pos
         elif hasattr(pos, 'x') and hasattr(pos, 'y'):
-            return (pos.x, pos.y)
+            aligned_pos = align_to_grid((pos.x, pos.y), grid_size=grid_size)
+            return aligned_pos
         else:
             return pos
     except KeyError:
@@ -570,6 +639,10 @@ def get_pin_position(pins, node, pin_name):
 
 
 def route_connection_current_method(start_pos, end_pos, component_boxes, comp, neighbor, all_wires):
+    """
+    使用曼哈顿路由方法连接起点和终点。
+    """
+    # Define possible paths: first horizontal then vertical, or first vertical then horizontal
     path1 = [start_pos, (end_pos[0], start_pos[1]), end_pos]
     path2 = [start_pos, (start_pos[0], end_pos[1]), end_pos]
 
@@ -680,13 +753,16 @@ def flip_component(points, flip_point, mode="horizontal"):
 
     return flipped_points
 
+
 def get_component_bbox(component_type,
                        pos=(1, 2),
                        direction='right',
                        shrink_size=0.1, flip='none',
+                       vertical_scale=1.0,
+                       horizontal_scale=1.0,
                        **kwargs):
     print(
-        f"[DEBUG] Getting bounding box for component type '{component_type}' at position {pos} with direction '{direction}' and flip '{flip}'")
+        f"[DEBUG] Getting bounding box for component type '{component_type}' at position {pos} with direction '{direction}', flip '{flip}', vertical_scale '{vertical_scale}', and horizontal_scale '{horizontal_scale}'")
     # Handle MOSFETs separately
     if component_type == 'M':
         model = kwargs.get('model', '').upper()
@@ -720,8 +796,15 @@ def get_component_bbox(component_type,
     # Apply direction
     set_element_direction(element, direction)
     d = schemdraw.Drawing(show=False)
+    # Apply scaling
+    element.scalex(horizontal_scale)
+    element.scaley(vertical_scale)
+    print(f"[DEBUG] Applied horizontal scale {horizontal_scale} and vertical scale {vertical_scale} to component.")
+
     element = d.add(element)
     print(f"[DEBUG] Element added to drawing: {element}")
+
+
 
     # Determine reference anchor
     if 'start' in element.anchors:
@@ -730,6 +813,8 @@ def get_component_bbox(component_type,
         ref_anchor_name = 'drain'
     elif 'base' in element.anchors:
         ref_anchor_name = 'base'
+    elif 'bulk' in element.anchors:
+        ref_anchor_name = 'bulk'
     else:
         ref_anchor_name = list(element.anchors.keys())[0]
 
@@ -744,34 +829,34 @@ def get_component_bbox(component_type,
         yDiff = abs_ref.y - local_ref.y
 
     bbox_local = element.get_bbox()
-    xmin_global = xDiff + bbox_local.xmin
-    xmax_global = xDiff + bbox_local.xmax
-    ymin_global = yDiff + bbox_local.ymin
-    ymax_global = yDiff + bbox_local.ymax
+    xmin_global = xDiff + bbox_local.xmin * horizontal_scale
+    xmax_global = xDiff + bbox_local.xmax * horizontal_scale
+    ymin_global = yDiff + bbox_local.ymin * vertical_scale
+    ymax_global = yDiff + bbox_local.ymax * vertical_scale
 
     # Adjust bounding box based on component type
     if component_type in ['GND', 'ground']:
-        ymax_global -= shrink_size
+        ymax_global -= shrink_size * vertical_scale
     elif component_type in ['R', 'C', 'L', 'D', 'V', 'I', 'E', 'H', 'F', 'G', 'S']:
-        xmin_global += shrink_size
-        xmax_global -= shrink_size
+        xmin_global += shrink_size * horizontal_scale
+        xmax_global -= shrink_size * horizontal_scale
     elif component_type == 'J':
-        xmax_global -= shrink_size
-        ymin_global += shrink_size
-        ymax_global -= shrink_size
+        xmax_global -= shrink_size * horizontal_scale
+        ymin_global += shrink_size * vertical_scale
+        ymax_global -= shrink_size * vertical_scale
         # Prevent wire crossing the junction field-effect transistor.
-        xmin_global -= shrink_size * 2
+        xmin_global -= shrink_size * horizontal_scale * 2
     elif component_type == 'Q':
-        xmin_global += shrink_size
-        ymin_global += shrink_size
-        ymax_global -= shrink_size
+        xmin_global += shrink_size * horizontal_scale
+        ymin_global += shrink_size * vertical_scale
+        ymax_global -= shrink_size * vertical_scale
         # Prevent wire crossing the bipolar transistor.
-        xmax_global += shrink_size * 2
+        xmax_global += shrink_size * horizontal_scale * 2
     elif component_type == 'M':
-        xmin_global += shrink_size
-        ymin_global += shrink_size
-        ymax_global -= shrink_size
-        xmax_global -= shrink_size  # Changed from += to -= to match user's configuration
+        xmin_global += shrink_size * horizontal_scale
+        ymin_global += shrink_size * vertical_scale
+        ymax_global -= shrink_size * vertical_scale
+        xmax_global -= shrink_size * horizontal_scale  # Changed from += to -= to match user's configuration
 
     anchors_global = {k: (v.x, v.y) for k, v in element.absanchors.items()}
     bbox = {
@@ -829,7 +914,7 @@ def get_component_bbox(component_type,
         # because the direction is up or down, so the horizontal flip is the same as the vertical flip
         flipped_vertices = flip_component(rotated_vertices, (x_center, y_center), mode=flip)
 
-    elif component_type in ['Q']:
+    elif component_type == 'Q':
         # because the direction is up or down, so the horizontal flip is the same as the vertical flip
         if direction == 'up' or direction == 'down':
             if flip == 'horizontal':
@@ -842,7 +927,7 @@ def get_component_bbox(component_type,
                 print("flip vertical")
             else:
                 flipped_vertices = rotated_vertices
-            print("run there")
+            print("run there-------------------------------------why")
         else:
             if flip == 'horizontal':
                 collector = element.absanchors['collector']
@@ -874,7 +959,9 @@ def get_component_bbox(component_type,
     return bbox, element.anchors, anchors_global
 
 
-def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G, flip='none'):
+def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G, flip='none', scaling_ratios=None):
+    if scaling_ratios is None:
+        scaling_ratios = {}
     print(f"[DEBUG] Drawing component/node: {node} of type {node_info.get('type')}")
     ctype = node_info.get('type')
     if ctype is None:
@@ -919,15 +1006,27 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
             params = node_info.get('parameters', {})
             # Remove 'MODEL' from params to avoid passing it to the element
             params = {k: v for k, v in params.items() if k != 'MODEL'}
+            # [MODIFIED] Retrieve vertical and horizontal scales
+            scale_info = scaling_ratios.get(node, default_scaling_ratios.get(ctype_for_bbox, {'vertical_scale':1.0, 'horizontal_scale':1.0}))
+            vertical_scale = scale_info.get('vertical_scale', 1.0)
+            horizontal_scale = scale_info.get('horizontal_scale', 1.0)
             bbox, anchors_local, anchors_global = get_component_bbox(
                 ctype_for_bbox, pos=(x, y), direction=direction,
                 shrink_size=shrink_size, flip=flip,
+                vertical_scale=vertical_scale,
+                horizontal_scale=horizontal_scale,
                 model=model, bulk=bulk, **params
             )
         else:
+            # [MODIFIED] Retrieve vertical and horizontal scales
+            scale_info = scaling_ratios.get(node, default_scaling_ratios.get(ctype_for_bbox, {'vertical_scale':1.0, 'horizontal_scale':1.0}))
+            vertical_scale = scale_info.get('vertical_scale', 1.0)
+            horizontal_scale = scale_info.get('horizontal_scale', 1.0)
             bbox, anchors_local, anchors_global = get_component_bbox(
                 ctype_for_bbox, pos=(x, y), direction=direction,
                 shrink_size=shrink_size, flip=flip,
+                vertical_scale=vertical_scale,
+                horizontal_scale=horizontal_scale,
                 **node_info.get('parameters', {})
             )
     except ValueError as e:
@@ -940,13 +1039,13 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
         # Instantiate the correct MOSFET type
         if model.startswith('P'):
             try:
-                element = elm.PFet(bulk=True).at((x, y))
+                element = elm.PFet(bulk=True, scale=1.0).at((x, y))  # schemdraw does not support separate scaling
             except AttributeError:
                 print("Error: schemdraw does not have 'PFet' element. Please verify the element name.")
                 return
         else:
             try:
-                element = elm.NFet(bulk=True).at((x, y))
+                element = elm.NFet(bulk=True, scale=1.0).at((x, y))  # schemdraw does not support separate scaling
             except AttributeError:
                 print("Error: schemdraw does not have 'NFet' element. Please verify the element name.")
                 return
@@ -955,6 +1054,7 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
         if comp_class is None:
             print(f"[ERROR] Unsupported component type: {ctype_for_bbox}")
             return
+        # [MODIFIED] Apply horizontal scale using scalex and vertical scale using scaley
         element = comp_class(**node_info.get('parameters', {})).at((x, y))
 
     # Apply direction
@@ -962,16 +1062,13 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
 
     # Apply flip if not MOSFET (handled above)
     if ctype_for_bbox != 'M':
-        if direction == 'up' or direction == 'down':
+        if direction in ['up', 'down']:
             if flip == 'horizontal':
                 element.flip()
                 print(f"[DEBUG] Applied horizontal flip to component '{node}'.")
             elif flip == 'vertical':
                 element.reverse()
                 print(f"[DEBUG] Applied vertical flip to component '{node}'.")
-            else:
-                element = element
-            print("run here-------------------------------------why")
         else:
             if flip == 'horizontal':
                 element.reverse()
@@ -979,12 +1076,10 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
             elif flip == 'vertical':
                 element.flip()
                 print(f"[DEBUG] Applied vertical flip to component '{node}'.")
-            else:
-                element = element
-
 
     # Add label
     element.label(label_text)
+    element.scalex(horizontal_scale).scaley(vertical_scale)
     element = d.add(element)
     print(f"[DEBUG] Drew component '{node}' with label '{label_text}'.")
 
@@ -1048,8 +1143,8 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
     print(f"[DEBUG] Bounding box for '{node}': {bbox}")
 
 
-def draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method, spatial_index,
-                     all_wires, pin_mapping):
+def draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method, all_wires,
+                     pin_mapping, grid_size=1.0):
     print("[DEBUG] Starting to draw connections...")
     for comp, neighbor, key in G.edges(keys=True):
         edge_nodes = tuple(sorted([comp, neighbor]))
@@ -1071,8 +1166,8 @@ def draw_connections(d, G, components_element, pins, component_boxes, drawn_edge
             print(f"[WARNING] Skipping edge {edge_key} due to missing pin assignments.")
             continue
 
-        start_pos = get_pin_position(pins, comp, comp_pin)
-        end_pos = get_pin_position(pins, neighbor, neighbor_pin)
+        start_pos = get_pin_position(pins, comp, comp_pin, grid_size=grid_size)
+        end_pos = get_pin_position(pins, neighbor, neighbor_pin, grid_size=grid_size)
 
         print(
             f"[DEBUG] Connecting {comp_pin} of '{comp}' at {start_pos} to {neighbor_pin} of '{neighbor}' at {end_pos}")
@@ -1087,6 +1182,9 @@ def draw_connections(d, G, components_element, pins, component_boxes, drawn_edge
         for i in range(len(selected_path) - 1):
             segment_start = selected_path[i]
             segment_end = selected_path[i + 1]
+            # Ensure wires align to grid
+            segment_start = align_to_grid(segment_start, grid_size=grid_size)
+            segment_end = align_to_grid(segment_end, grid_size=grid_size)
             new_line = LineString([segment_start, segment_end])
             all_wires.append({'line': new_line, 'color': line_color})
             print(f"[DEBUG] Added wire segment from {segment_start} to {segment_end} with color '{line_color}'")
@@ -1098,7 +1196,7 @@ def draw_connections(d, G, components_element, pins, component_boxes, drawn_edge
 
 
 def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_mapping, max_attempts=100,
-                 EnlargeSize=2.5, routing_method=1, auto=1):
+                EnlargeSize=2.5, routing_method=1, auto=1, grid_size=1.0):
     print("[DEBUG] Starting to draw the circuit...")
     attempt = 0
     success = False
@@ -1106,10 +1204,11 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
     last_pos = None
     last_all_wires = None
 
-    # Read existing directions and positions from XML
+    # Read existing directions, flips, positions, and scales from XML
     positions_in_xml = {}
     directions_in_xml = {}
-    flips_in_xml = {}  # Read flip attributes
+    flips_in_xml = {}  # Read flip attribute
+    scaling_ratios = {}  # Read scale attributes
 
     components_elem = xml_root.find('components')
     if components_elem is not None:
@@ -1117,12 +1216,18 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
             cid = comp.attrib['id']
             dir_val = comp.attrib.get('direction', 'right')
             flip_val = comp.attrib.get('flip', 'none')  # Read flip attribute
+            vertical_scale = float(comp.attrib.get('vertical_scale', '1.0'))
+            horizontal_scale = float(comp.attrib.get('horizontal_scale', '1.0'))
+            scaling_ratios[cid] = {
+                'vertical_scale': vertical_scale,
+                'horizontal_scale': horizontal_scale
+            }
             directions_in_xml[cid] = dir_val
             flips_in_xml[cid] = flip_val
             if 'x' in comp.attrib and 'y' in comp.attrib:
                 positions_in_xml[cid] = (float(comp.attrib['x']), float(comp.attrib['y']))
             print(
-                f"[DEBUG] Component '{cid}': direction='{dir_val}', flip='{flip_val}', position={positions_in_xml.get(cid, 'Not set')}")
+                f"[DEBUG] Component '{cid}': direction='{dir_val}', flip='{flip_val}', vertical_scale='{vertical_scale}', horizontal_scale='{horizontal_scale}', position={positions_in_xml.get(cid, 'Not set')}")
 
     nodes_elem = xml_root.find('nodes')
     if nodes_elem is not None:
@@ -1139,15 +1244,24 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
             print(f"[DEBUG] Attempt {attempt} (auto=1, automatic layout)")
 
             original_pos = nx.spring_layout(G)
+            # Enlarge layout
             pos = {n: (EnlargeSize * original_pos[n][0], EnlargeSize * (-original_pos[n][1])) for n in G.nodes}
 
+            # Align all positions to grid
+            pos = {n: align_to_grid(pos[n], grid_size=grid_size) for n in pos}
+
             directions = {}
-            flips = {}  # [NEW CODE]
+            flips = {}
+            scales = {}
             for n in G.nodes:
                 directions[n] = directions_in_xml.get(n, 'right')
-                flips[n] = flips_in_xml.get(n, 'none')  # [NEW CODE]
+                flips[n] = flips_in_xml.get(n, 'none')
+                scales[n] = scaling_ratios.get(n, default_scaling_ratios.get(G.nodes[n]['type'], {'vertical_scale':1.0, 'horizontal_scale':1.0}))  # Assign scale
 
             d = schemdraw.Drawing()
+            if draw_grid_or_not == 1:
+                draw_grid(d, grid_size=grid_size)  # Add grid lines
+
             elements = {}
             pins = {}
             component_boxes = {}
@@ -1158,20 +1272,20 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
                 node_info = G.nodes[node]
                 x, y = pos[node]
                 direction = directions.get(node, 'right')
-                flip_in_xml = flips.get(node, 'none')  # [NEW CODE]
+                flip_in_xml = flips.get(node, 'none')
+                scale = scales.get(node, {'vertical_scale':1.0, 'horizontal_scale':1.0})  # Assign scale
                 print(
-                    f"[DEBUG] Drawing node/component '{node}' at ({x}, {y}) with direction '{direction}' and flip '{flip_in_xml}'")
+                    f"[DEBUG] Drawing node/component '{node}' at ({x}, {y}) with direction '{direction}', flip '{flip_in_xml}', and scale '{scale}'")
                 draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G,
-                                       flip=flip_in_xml)
-
-            component_polygons = [comp_info['polygon'] for comp_info in component_boxes.values()]
-            spatial_index = STRtree(component_polygons)
+                                       flip=flip_in_xml, scaling_ratios=scales)  # Pass scaling_ratios
+                # Update scaling_ratios for later use
+                scaling_ratios[node] = scale
 
             # Use a deep copy of initial_comp_node_mapping
             pin_mapping_copy = copy.deepcopy(initial_comp_node_mapping)
 
             draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method,
-                             spatial_index, all_wires, pin_mapping_copy)
+                             all_wires, pin_mapping_copy, grid_size=grid_size)
 
             any_red_line = any(wire['color'] == wire_danger_color for wire in all_wires)
             overlapping = check_overlapping_wires(all_wires)
@@ -1191,7 +1305,7 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
                     print(f"[DEBUG] Drew wire from {line.coords[0]} to {line.coords[1]} with color '{color}'")
                 add_anchor_dots(d, all_wires)
                 print(f"[DEBUG] Layout successful after {attempt} attempts.")
-                update_xml_positions_and_directions(xml_root, pos, directions, flips)  # [NEW CODE] Update flip
+                update_xml_positions_and_directions(xml_root, pos, directions, flips, scaling_ratios)  # Pass scaling_ratios
                 tree = ET.ElementTree(xml_root)
                 tree.write(xml_file)
                 d.draw()
@@ -1202,7 +1316,7 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
             print("[DEBUG] No suitable layout found after all attempts. Showing last attempt with issues.")
             d = schemdraw.Drawing()
             if last_pos is not None and last_all_wires is not None:
-                update_xml_positions_and_directions(xml_root, last_pos, directions_in_xml, flips_in_xml)
+                update_xml_positions_and_directions(xml_root, last_pos, directions_in_xml, flips_in_xml, scaling_ratios)
                 tree = ET.ElementTree(xml_root)
                 tree.write(xml_file)
 
@@ -1214,11 +1328,14 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
                     node_info = G.nodes[node]
                     x, y = last_pos[node]
                     direction = directions_in_xml.get(node, 'right')
-                    flip_in_xml = flips_in_xml.get(node, 'none')  # [NEW CODE]
+                    flip_in_xml = flips_in_xml.get(node, 'none')
+                    scale = scaling_ratios.get(node, {'vertical_scale':1.0, 'horizontal_scale':1.0})  # Assign scale
                     print(
-                        f"[DEBUG] Redrawing node/component '{node}' at ({x}, {y}) with direction '{direction}' and flip '{flip_in_xml}'")
+                        f"[DEBUG] Redrawing node/component '{node}' at ({x}, {y}) with direction '{direction}', flip '{flip_in_xml}', and scale '{scale}'")
                     draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G,
-                                           flip=flip_in_xml)
+                                           flip=flip_in_xml, scaling_ratios=scaling_ratios)  # Pass scaling_ratios
+                    # Update scaling_ratios for later use
+                    scaling_ratios[node] = scale
 
                 for wire_info in last_all_wires:
                     line = wire_info['line']
@@ -1228,46 +1345,66 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
                 add_anchor_dots(d, last_all_wires)
                 d.draw()
 
-def draw_circuit_fixed_positions(d, G, components_element, pins, component_boxes, spatial_index, all_wires,
-                                 positions_in_xml, directions_in_xml, flips_in_xml):
-    """
-    Draws the circuit using fixed positions from the XML.
-    """
-    print("[DEBUG] Drawing circuit with fixed positions (auto=0)...")
-    drawn_edges = set()
-    pin_mapping_copy = copy.deepcopy(build_comp_node_mapping(components_element))
+    else:
+        # Fixed layout
+        print("[DEBUG] Drawing circuit with fixed positions (auto=0)...")
+        d = schemdraw.Drawing()
+        if draw_grid_or_not == 1:
+            draw_grid(d, grid_size=grid_size)  # Add grid lines
+        elements = {}
+        pins = {}
+        component_boxes = {}
+        drawn_edges = set()
+        all_wires = []
 
-    for node in G.nodes:
-        node_info = G.nodes[node]
-        if node in component_boxes:
-            # Already drawn
-            continue
-        # Retrieve position from positions_in_xml
-        if node in positions_in_xml:
-            x, y = positions_in_xml[node]
-            # Assign default direction and flip or retrieve from XML
-            direction = directions_in_xml.get(node, default_directions.get(node_info.get('type', 'node'), 'right'))
-            flip = flips_in_xml.get(node, default_flips.get(node_info.get('type', 'node'), 'none'))
-            pins[node] = {'pin': (x, y)}
-            print(
-                f"[DEBUG] Setting pin for node '{node}': ({x}, {y}) with direction '{direction}' and flip '{flip}'")
-            draw_component_or_node(d, elements={}, pins=pins, node=node, node_info=node_info, x=x, y=y,
-                                   direction=direction, component_boxes=component_boxes, G=G, flip=flip)
-        else:
-            print(f"[ERROR] No position found for node '{node}'. Skipping.")
-            continue
+        # Use positions from XML
+        pos = positions_in_xml
+        directions = directions_in_xml
+        flips = flips_in_xml
 
-    # After placing all components, draw connections
-    draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method=1,
-                     spatial_index=spatial_index, all_wires=all_wires, pin_mapping=pin_mapping_copy)
+        for node in G.nodes:
+            node_info = G.nodes[node]
+            if node not in pos:
+                print(f"[WARNING] Node '{node}' 没有定义位置，跳过。")
+                continue
+            x, y = pos[node]
+            direction = directions.get(node, 'right')
+            flip_val = flips.get(node, 'none')
+            scale = scaling_ratios.get(node, default_scaling_ratios.get(G.nodes[node]['type'], {'vertical_scale':1.0, 'horizontal_scale':1.0}))  # Assign scale
+            print(f"[DEBUG] Drawing node/component '{node}' at ({x}, {y}) with direction '{direction}', flip '{flip_val}', and scale '{scale}'")
+            draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G,
+                                   flip=flip_val, scaling_ratios=scaling_ratios)  # Pass scaling_ratios
+            # Update scaling_ratios for later use
+            scaling_ratios[node] = scale
 
-    # Draw wires
-    for wire_info in all_wires:
-        line = wire_info['line']
-        color = wire_info['color']
-        d.add(elm.Line().at(line.coords[0]).to(line.coords[1]).color(color))
-        print(f"[DEBUG] Drew wire from {line.coords[0]} to {line.coords[1]} with color '{color}'")
-    add_anchor_dots(d, all_wires)
+        # Use a deep copy of initial_comp_node_mapping
+        pin_mapping_copy = copy.deepcopy(initial_comp_node_mapping)
+
+        draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method,
+                         all_wires, pin_mapping_copy, grid_size=grid_size)
+
+        # Check wire colors and overlaps
+        any_red_line = any(wire['color'] == wire_danger_color for wire in all_wires)
+        overlapping = check_overlapping_wires(all_wires)
+
+        if any_red_line or overlapping:
+            print("[WARNING] 存在红色线条或重叠线条，部分连接可能有问题。")
+
+        print(f"[DEBUG] Drawing wires...")
+        for wire_info in all_wires:
+            line = wire_info['line']
+            color = wire_info['color']
+            d.add(elm.Line().at(line.coords[0]).to(line.coords[1]).color(color))
+            print(f"[DEBUG] Drew wire from {line.coords[0]} to {line.coords[1]} with color '{color}'")
+        add_anchor_dots(d, all_wires)
+
+        # Update positions and directions in XML
+        update_xml_positions_and_directions(xml_root, pos, directions, flips, scaling_ratios)
+        tree = ET.ElementTree(xml_root)
+        tree.write(xml_file)
+        d.draw()
+
+    print("[DEBUG] Finished drawing the circuit.")
 
 
 def main():
@@ -1295,53 +1432,28 @@ def main():
     G, components_element = create_graph_from_xml(xml_root)
 
     # Build component-node mapping
-    initial_comp_node_mapping = build_comp_node_mapping([comp for comp in components_element])
-
-    d = schemdraw.Drawing()
-    elements = {}
-    pins = {}
-    component_boxes = {}
-    all_wires = []
+    initial_comp_node_mapping = build_comp_node_mapping(components_element)
 
     if auto == 1:
         # Automatic layout
-        draw_circuit(
-            G, components_element, xml_root, output_xml,
-            initial_comp_node_mapping,  # Pass initial mapping
-            max_attempts=max_attempts,
-            EnlargeSize=EnlargeSize,
-            routing_method=routing_method,
-            auto=auto
-        )
+        print("[DEBUG] Starting automatic layout...")
     else:
-        # Fixed positions
-        print("[DEBUG] Drawing circuit with fixed positions (auto=0)...")
-        # Extract positions from XML
-        positions_in_xml = {}
-        directions_in_xml = {}
-        flips_in_xml = {}
-        components_elem = xml_root.find('components')
-        if components_elem is not None:
-            for comp in components_elem:
-                cid = comp.attrib['id']
-                if 'x' in comp.attrib and 'y' in comp.attrib:
-                    positions_in_xml[cid] = (float(comp.attrib['x']), float(comp.attrib['y']))
-                direction = comp.attrib.get('direction', 'right')
-                flip = comp.attrib.get('flip', 'none')
-                directions_in_xml[cid] = direction
-                flips_in_xml[cid] = flip
-        nodes_elem = xml_root.find('nodes')
-        if nodes_elem is not None:
-            for node in nodes_elem:
-                nid = node.attrib['id']
-                if 'x' in node.attrib and 'y' in node.attrib:
-                    positions_in_xml[nid] = (float(node.attrib['x']), float(node.attrib['y']))
-        # Call the fixed positions drawing function
-        draw_circuit_fixed_positions(d, G, components_element, pins, component_boxes, spatial_index=None,
-                                     all_wires=all_wires, positions_in_xml=positions_in_xml,
-                                     directions_in_xml=directions_in_xml, flips_in_xml=flips_in_xml)
-        print("[DEBUG] Finished drawing fixed-position circuit.")
-        d.draw()
+        # Fixed layout
+        print("[DEBUG] Starting fixed layout...")
+
+    # No need to initialize 'd' here as it's handled inside 'draw_circuit'
+    # d = schemdraw.Drawing()
+
+    draw_circuit(
+        G, components_element, xml_root, output_xml,
+        initial_comp_node_mapping,  # Pass initial mapping
+        max_attempts=max_attempts,
+        EnlargeSize=EnlargeSize,
+        routing_method=routing_method,
+        auto=auto,
+        grid_size=grid_size  # Add grid_size parameter
+        # default_size_ratio removed as scaling is per-component
+    )
 
     print("[DEBUG] Script finished successfully.")
 

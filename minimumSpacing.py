@@ -41,6 +41,7 @@ wire_safe_color = 'green'
 wire_danger_color = 'red'
 grid_size = 0.1  # Define the grid size
 draw_grid_or_not = 0  # Set to 1 to draw grid, 0 to not draw grid
+min_wire_spacing = 0.2  # Minimum spacing between parallel wires
 
 # Default Directions and Flips
 default_directions = {
@@ -636,33 +637,41 @@ def get_pin_position(pins, node, pin_name, grid_size=1.0):
         return None
 
 
-def route_connection_current_method(start_pos, end_pos, component_boxes, comp, neighbor, all_wires):
+def route_connection_current_method(start_pos, end_pos, component_boxes, comp, neighbor, all_wires, min_wire_spacing=0.4):
     """
-    使用曼哈顿路由方法连接起点和终点。
+    使用曼哈顿路由方法连接起点和终点，并确保平行线之间的最小间距。
     """
     # Define possible paths: first horizontal then vertical, or first vertical then horizontal
     path1 = [start_pos, (end_pos[0], start_pos[1]), end_pos]
     path2 = [start_pos, (start_pos[0], end_pos[1]), end_pos]
 
+    # Create buffer around existing wires
+    existing_buffers = [wire['line'].buffer(min_wire_spacing / 2, cap_style=2, join_style=2) for wire in all_wires]
+
     def path_ok(path):
         for i in range(len(path) - 1):
+            seg = LineString([path[i], path[i + 1]])
+            # Check intersection with component bounding boxes
             if is_wire_crossing_components(path[i], path[i + 1], component_boxes, comp, neighbor):
                 return False
-        for i in range(len(path) - 1):
-            seg = LineString([path[i], path[i + 1]])
-            for w in all_wires:
-                lw = w['line']
-                if seg.equals(lw) or seg.contains(lw) or lw.contains(seg):
+            # Check intersection with existing wire buffers
+            for buf in existing_buffers:
+                if seg.intersects(buf):
+                    print(f"[DEBUG] Path segment {seg} intersects with existing wire buffer.")
                     return False
         return True
 
+    # Check path1
     if path_ok(path1):
         print(f"[DEBUG] Path1 is OK: {path1}")
         return path1, wire_safe_color
+
+    # Check path2
     if path_ok(path2):
         print(f"[DEBUG] Path2 is OK: {path2}")
         return path2, wire_safe_color
 
+    # If neither path is valid, attempt to find an alternative path or mark as danger
     print(f"[DEBUG] Both paths not OK. Selecting path1 with danger color.")
     return path1, wire_danger_color
 
@@ -801,8 +810,6 @@ def get_component_bbox(component_type,
 
     element = d.add(element)
     print(f"[DEBUG] Element added to drawing: {element}")
-
-
 
     # Determine reference anchor
     if 'start' in element.anchors:
@@ -1142,7 +1149,7 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
 
 
 def draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method, all_wires,
-                     pin_mapping, grid_size=1.0):
+                     pin_mapping, grid_size=1.0, min_wire_spacing=0.4):
     print("[DEBUG] Starting to draw connections...")
     for comp, neighbor, key in G.edges(keys=True):
         edge_nodes = tuple(sorted([comp, neighbor]))
@@ -1174,7 +1181,7 @@ def draw_connections(d, G, components_element, pins, component_boxes, drawn_edge
             continue
 
         selected_path, line_color = route_connection_current_method(
-            start_pos, end_pos, component_boxes, comp, neighbor, all_wires
+            start_pos, end_pos, component_boxes, comp, neighbor, all_wires, min_wire_spacing=min_wire_spacing
         )
 
         for i in range(len(selected_path) - 1):
@@ -1194,7 +1201,7 @@ def draw_connections(d, G, components_element, pins, component_boxes, drawn_edge
 
 
 def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_mapping, max_attempts=100,
-                EnlargeSize=2.5, routing_method=1, auto=1, grid_size=1.0):
+                EnlargeSize=2.5, routing_method=1, auto=1, grid_size=1.0, min_wire_spacing=0.4):
     print("[DEBUG] Starting to draw the circuit...")
     attempt = 0
     success = False
@@ -1283,7 +1290,7 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
             pin_mapping_copy = copy.deepcopy(initial_comp_node_mapping)
 
             draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method,
-                             all_wires, pin_mapping_copy, grid_size=grid_size)
+                             all_wires, pin_mapping_copy, grid_size=grid_size, min_wire_spacing=min_wire_spacing)
 
             any_red_line = any(wire['color'] == wire_danger_color for wire in all_wires)
             overlapping = check_overlapping_wires(all_wires)
@@ -1379,7 +1386,7 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
         pin_mapping_copy = copy.deepcopy(initial_comp_node_mapping)
 
         draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method,
-                         all_wires, pin_mapping_copy, grid_size=grid_size)
+                         all_wires, pin_mapping_copy, grid_size=grid_size, min_wire_spacing=min_wire_spacing)
 
         # Check wire colors and overlaps
         any_red_line = any(wire['color'] == wire_danger_color for wire in all_wires)
@@ -1449,7 +1456,8 @@ def main():
         EnlargeSize=EnlargeSize,
         routing_method=routing_method,
         auto=auto,
-        grid_size=grid_size  # Add grid_size parameter
+        grid_size=grid_size,  # Add grid_size parameter
+        min_wire_spacing=min_wire_spacing  # Add min_wire_spacing parameter
         # default_size_ratio removed as scaling is per-component
     )
 

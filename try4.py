@@ -37,7 +37,7 @@ Vin out 0 DC 1.8
 EnlargeSize = 15
 max_attempts = 300
 routing_method = 1  # Only Manhattan routing is used
-auto = 1  # Set to 0 for fixed positions, 1 for automatic layout
+auto = 0  # Set to 0 for fixed positions, 1 for automatic layout
 shrink_size = 0.05
 wire_safe_color = 'green'
 wire_danger_color = 'red'

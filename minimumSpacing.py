@@ -41,7 +41,6 @@ wire_safe_color = 'green'
 wire_danger_color = 'red'
 grid_size = 0.1  # Define the grid size
 draw_grid_or_not = 0  # Set to 1 to draw grid, 0 to not draw grid
-min_wire_spacing = 0.2  # Minimum spacing between parallel wires
 
 # Default Directions and Flips
 default_directions = {
@@ -493,13 +492,11 @@ def build_comp_node_mapping(components):
         # Extract nodes
         nodes = []
         i = 1
-        while True:
-            node = comp.find(f'node{i}')
-            if node is not None:
-                nodes.append(node.text)
-                i += 1
-            else:
-                break
+        while component := comp.find(f'node{i}'):
+            node_text = component.text
+            if node_text:
+                nodes.append(node_text)
+            i += 1
 
         if ctype == 'Q':
             if len(nodes) < 3:
@@ -637,41 +634,33 @@ def get_pin_position(pins, node, pin_name, grid_size=1.0):
         return None
 
 
-def route_connection_current_method(start_pos, end_pos, component_boxes, comp, neighbor, all_wires, min_wire_spacing=0.4):
+def route_connection_current_method(start_pos, end_pos, component_boxes, comp, neighbor, all_wires):
     """
-    使用曼哈顿路由方法连接起点和终点，并确保平行线之间的最小间距。
+    使用曼哈顿路由方法连接起点和终点。
     """
     # Define possible paths: first horizontal then vertical, or first vertical then horizontal
     path1 = [start_pos, (end_pos[0], start_pos[1]), end_pos]
     path2 = [start_pos, (start_pos[0], end_pos[1]), end_pos]
 
-    # Create buffer around existing wires
-    existing_buffers = [wire['line'].buffer(min_wire_spacing / 2, cap_style=2, join_style=2) for wire in all_wires]
-
     def path_ok(path):
         for i in range(len(path) - 1):
-            seg = LineString([path[i], path[i + 1]])
-            # Check intersection with component bounding boxes
             if is_wire_crossing_components(path[i], path[i + 1], component_boxes, comp, neighbor):
                 return False
-            # Check intersection with existing wire buffers
-            for buf in existing_buffers:
-                if seg.intersects(buf):
-                    print(f"[DEBUG] Path segment {seg} intersects with existing wire buffer.")
+        for i in range(len(path) - 1):
+            seg = LineString([path[i], path[i + 1]])
+            for w in all_wires:
+                lw = w['line']
+                if seg.equals(lw) or seg.contains(lw) or lw.contains(seg):
                     return False
         return True
 
-    # Check path1
     if path_ok(path1):
         print(f"[DEBUG] Path1 is OK: {path1}")
         return path1, wire_safe_color
-
-    # Check path2
     if path_ok(path2):
         print(f"[DEBUG] Path2 is OK: {path2}")
         return path2, wire_safe_color
 
-    # If neither path is valid, attempt to find an alternative path or mark as danger
     print(f"[DEBUG] Both paths not OK. Selecting path1 with danger color.")
     return path1, wire_danger_color
 
@@ -1149,7 +1138,7 @@ def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, 
 
 
 def draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method, all_wires,
-                     pin_mapping, grid_size=1.0, min_wire_spacing=0.4):
+                     pin_mapping, grid_size=1.0):
     print("[DEBUG] Starting to draw connections...")
     for comp, neighbor, key in G.edges(keys=True):
         edge_nodes = tuple(sorted([comp, neighbor]))
@@ -1181,7 +1170,7 @@ def draw_connections(d, G, components_element, pins, component_boxes, drawn_edge
             continue
 
         selected_path, line_color = route_connection_current_method(
-            start_pos, end_pos, component_boxes, comp, neighbor, all_wires, min_wire_spacing=min_wire_spacing
+            start_pos, end_pos, component_boxes, comp, neighbor, all_wires
         )
 
         for i in range(len(selected_path) - 1):
@@ -1200,8 +1189,65 @@ def draw_connections(d, G, components_element, pins, component_boxes, drawn_edge
     print("[DEBUG] Finished drawing all connections.")
 
 
+def check_minimum_spacing(all_wires, min_distance=0.15):
+    """
+    检查所有平行线段之间是否满足最小间距。
+
+    :param all_wires: 所有线段的列表，每个线段为字典，包含 'line' 和 'color'
+    :param min_distance: 最小间距阈值
+    :return: 是否存在不满足最小间距的线段对
+    """
+    print("[DEBUG] 检查平行线段之间的最小间距...")
+    num_wires = len(all_wires)
+    violation_found = False
+
+    for i in range(num_wires):
+        wire_i = all_wires[i]['line']
+        orientation_i = get_wire_orientation(wire_i)
+        if orientation_i not in ['horizontal', 'vertical']:
+            continue  # 只检查水平和垂直的线段
+        for j in range(i + 1, num_wires):
+            wire_j = all_wires[j]['line']
+            orientation_j = get_wire_orientation(wire_j)
+
+            # 只检查平行的线段（水平或垂直）
+            if orientation_i != orientation_j:
+                continue
+
+            # 计算两条线段之间的最小距离
+            distance = wire_i.distance(wire_j)
+            if distance < min_distance:
+                violation_found = True
+                all_wires[i]['color'] = wire_danger_color
+                all_wires[j]['color'] = wire_danger_color
+                print(f"[DEBUG] 线段 {i} 和线段 {j} 之间的距离 {distance:.3f} 小于最小间距 {min_distance}。标记为危险。")
+
+    if violation_found:
+        print("[DEBUG] 存在不满足最小间距的平行线段。")
+    else:
+        print("[DEBUG] 所有平行线段之间均满足最小间距要求。")
+
+    return violation_found
+
+
+def get_wire_orientation(line):
+    """
+    获取线段的方向：'horizontal', 'vertical' 或 'other'
+
+    :param line: shapely.geometry.LineString 对象
+    :return: 'horizontal', 'vertical' 或 'other'
+    """
+    (x1, y1), (x2, y2) = list(line.coords)
+    if abs(y2 - y1) < 1e-6:
+        return 'horizontal'
+    elif abs(x2 - x1) < 1e-6:
+        return 'vertical'
+    else:
+        return 'other'
+
+
 def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_mapping, max_attempts=100,
-                EnlargeSize=2.5, routing_method=1, auto=1, grid_size=1.0, min_wire_spacing=0.4):
+                EnlargeSize=2.5, routing_method=1, auto=1, grid_size=1.0):
     print("[DEBUG] Starting to draw the circuit...")
     attempt = 0
     success = False
@@ -1246,7 +1292,7 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
         # Automatic layout
         while attempt < max_attempts:
             attempt += 1
-            print(f"[DEBUG] Attempt {attempt} (auto=1, automatic layout)")
+            print(f"[DEBUG] Attempt {attempt} (auto=1, 自动布局)")
 
             original_pos = nx.spring_layout(G)
             # Enlarge layout
@@ -1289,17 +1335,22 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
             # Use a deep copy of initial_comp_node_mapping
             pin_mapping_copy = copy.deepcopy(initial_comp_node_mapping)
 
+            # Draw connections
             draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method,
-                             all_wires, pin_mapping_copy, grid_size=grid_size, min_wire_spacing=min_wire_spacing)
+                             all_wires, pin_mapping_copy, grid_size=grid_size)
 
+            # Check for red lines and overlapping
             any_red_line = any(wire['color'] == wire_danger_color for wire in all_wires)
             overlapping = check_overlapping_wires(all_wires)
+
+            # Check minimum spacing
+            min_spacing_violation = check_minimum_spacing(all_wires, min_distance=0.15)
 
             last_pos = pos
             last_all_wires = all_wires
 
-            if any_red_line or overlapping:
-                print("[DEBUG] Overlap or red lines detected. Retrying...")
+            if any_red_line or overlapping or min_spacing_violation:
+                print("[DEBUG] 存在重叠、红色线条或最小间距违规。重试...")
                 continue
             else:
                 print(f"[DEBUG] Successful layout found on attempt {attempt}. Drawing wires...")
@@ -1338,10 +1389,10 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
                     print(
                         f"[DEBUG] Redrawing node/component '{node}' at ({x}, {y}) with direction '{direction}', flip '{flip_in_xml}', and scale '{scale}'")
                     draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G,
-                                           flip=flip_in_xml, scaling_ratios=scaling_ratios)  # Pass scaling_ratios
-                    # Update scaling_ratios for later use
+                                           flip=flip_in_xml, scaling_ratios=scales)  # Pass scaling_ratios
                     scaling_ratios[node] = scale
 
+                # Draw the last attempt's wires
                 for wire_info in last_all_wires:
                     line = wire_info['line']
                     color = wire_info['color']
@@ -1385,15 +1436,19 @@ def draw_circuit(G, components_element, xml_root, xml_file, initial_comp_node_ma
         # Use a deep copy of initial_comp_node_mapping
         pin_mapping_copy = copy.deepcopy(initial_comp_node_mapping)
 
+        # Draw connections
         draw_connections(d, G, components_element, pins, component_boxes, drawn_edges, routing_method,
-                         all_wires, pin_mapping_copy, grid_size=grid_size, min_wire_spacing=min_wire_spacing)
+                         all_wires, pin_mapping_copy, grid_size=grid_size)
 
         # Check wire colors and overlaps
         any_red_line = any(wire['color'] == wire_danger_color for wire in all_wires)
         overlapping = check_overlapping_wires(all_wires)
 
-        if any_red_line or overlapping:
-            print("[WARNING] 存在红色线条或重叠线条，部分连接可能有问题。")
+        # Check minimum spacing
+        min_spacing_violation = check_minimum_spacing(all_wires, min_distance=0.15)
+
+        if any_red_line or overlapping or min_spacing_violation:
+            print("[WARNING] 存在红色线条、重叠线条或最小间距违规，部分连接可能有问题。")
 
         print(f"[DEBUG] Drawing wires...")
         for wire_info in all_wires:
@@ -1456,8 +1511,7 @@ def main():
         EnlargeSize=EnlargeSize,
         routing_method=routing_method,
         auto=auto,
-        grid_size=grid_size,  # Add grid_size parameter
-        min_wire_spacing=min_wire_spacing  # Add min_wire_spacing parameter
+        grid_size=grid_size  # Add grid_size parameter
         # default_size_ratio removed as scaling is per-component
     )
 

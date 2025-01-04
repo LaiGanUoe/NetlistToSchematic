@@ -35,12 +35,12 @@ Vin out 0 DC 1.8
 EnlargeSize = 15
 max_attempts = 300
 routing_method = 1  # Only Manhattan routing is used
-auto = 1  # Set to 0 for fixed positions, 1 for automatic layout
-shrink_size = 0.05
+auto = 0  # Set to 0 for fixed positions, 1 for automatic layout
+shrink_size = 0.03
 wire_safe_color = 'green'
 wire_danger_color = 'red'
 grid_size = 0.1  # Define the grid size
-draw_grid_or_not = 0  # Set to 1 to draw grid, 0 to not draw grid
+draw_grid_or_not = 1  # Set to 1 to draw grid, 0 to not draw grid
 
 # Default Directions and Flips
 default_directions = {
@@ -414,9 +414,9 @@ def draw_grid(d, grid_size=1.0, grid_extent=20):
     :param grid_extent: 网格的范围（正负方向）
     """
     for x in np.arange(-grid_extent, grid_extent + grid_size, grid_size):
-        d.add(elm.Line().at((x, -grid_extent)).to((x, grid_extent)).color('lightgray').linewidth(0.3))
+        d.add(elm.Line().at((x, -grid_extent)).to((x, grid_extent)).color('lightgray').linewidth(0.2))
     for y in np.arange(-grid_extent, grid_extent + grid_size, grid_size):
-        d.add(elm.Line().at((-grid_extent, y)).to((grid_extent, y)).color('lightgray').linewidth(0.3))
+        d.add(elm.Line().at((-grid_extent, y)).to((grid_extent, y)).color('lightgray').linewidth(0.2))
     print(f"[DEBUG] Drawn grid with size {grid_size} and extent {grid_extent}.")
 
 
@@ -802,17 +802,16 @@ def get_component_bbox(component_type,
     element = d.add(element)
     print(f"[DEBUG] Element added to drawing: {element}")
 
-
-
     # Determine reference anchor
     if 'start' in element.anchors:
         ref_anchor_name = 'start'
     elif 'drain' in element.anchors:
-        ref_anchor_name = 'drain'
+        if component_type == 'M':
+            ref_anchor_name = 'source'
+        else:
+            ref_anchor_name = 'drain'
     elif 'base' in element.anchors:
         ref_anchor_name = 'base'
-    elif 'bulk' in element.anchors:
-        ref_anchor_name = 'bulk'
     else:
         ref_anchor_name = list(element.anchors.keys())[0]
 
@@ -826,7 +825,10 @@ def get_component_bbox(component_type,
         xDiff = abs_ref.x - local_ref.x
         yDiff = abs_ref.y - local_ref.y
 
+    print("xDiff:" + str(xDiff))
+    print("yDiff:" + str(yDiff))
     bbox_local = element.get_bbox()
+    print("bbox_local:" + str(bbox_local))
     xmin_global = xDiff + bbox_local.xmin * horizontal_scale
     xmax_global = xDiff + bbox_local.xmax * horizontal_scale
     ymin_global = yDiff + bbox_local.ymin * vertical_scale
@@ -834,27 +836,27 @@ def get_component_bbox(component_type,
 
     # Adjust bounding box based on component type
     if component_type in ['GND', 'ground']:
-        ymax_global -= shrink_size * vertical_scale
+        ymax_global -= shrink_size
     elif component_type in ['R', 'C', 'L', 'D', 'V', 'I', 'E', 'H', 'F', 'G', 'S']:
-        xmin_global += shrink_size * horizontal_scale
-        xmax_global -= shrink_size * horizontal_scale
+        xmin_global += shrink_size
+        xmax_global -= shrink_size
     elif component_type == 'J':
-        xmax_global -= shrink_size * horizontal_scale
-        ymin_global += shrink_size * vertical_scale
-        ymax_global -= shrink_size * vertical_scale
+        xmax_global -= shrink_size
+        ymin_global += shrink_size
+        ymax_global -= shrink_size
         # Prevent wire crossing the junction field-effect transistor.
-        xmin_global -= shrink_size * horizontal_scale * 2
+        xmin_global -= shrink_size
     elif component_type == 'Q':
-        xmin_global += shrink_size * horizontal_scale
-        ymin_global += shrink_size * vertical_scale
-        ymax_global -= shrink_size * vertical_scale
+        xmin_global += shrink_size
+        ymin_global += shrink_size
+        ymax_global -= shrink_size
         # Prevent wire crossing the bipolar transistor.
-        xmax_global += shrink_size * horizontal_scale * 2
+        xmax_global += shrink_size * 2
     elif component_type == 'M':
-        xmin_global += shrink_size * horizontal_scale
-        ymin_global += shrink_size * vertical_scale
-        ymax_global -= shrink_size * vertical_scale
-        xmax_global -= shrink_size * horizontal_scale  # Changed from += to -= to match user's configuration
+        xmin_global += shrink_size
+        ymin_global += shrink_size
+        ymax_global -= shrink_size
+        xmax_global -= shrink_size   # Changed from += to -= to match user's configuration
 
     anchors_global = {k: (v.x, v.y) for k, v in element.absanchors.items()}
     bbox = {
@@ -955,6 +957,7 @@ def get_component_bbox(component_type,
     print(f"[DEBUG] Global anchors: {anchors_global}")
 
     return bbox, element.anchors, anchors_global
+
 
 
 def draw_component_or_node(d, elements, pins, node, node_info, x, y, direction, component_boxes, G, flip='none', scaling_ratios=None):

@@ -1,10 +1,18 @@
-from shapely.geometry import Polygon
+from shapely.geometry import LineString
 
-# 创建两个多边形
-polygon1 = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
-polygon2 = Polygon([(2, 2), (3, 2), (3, 3), (2, 3)])
+# 假设 `all_wires` 是一个包含多根导线的列表，每根导线是一个字典，字典中包含 'line' 键
+all_wires = [
+    {'line': LineString([(0, 0), (1, 1)])},  # 示例1
+    {'line': LineString([(2, 2), (3, 3)])},  # 示例2
+    # 更多的导线...
+]
 
-# 计算最小距离
-min_clearance = polygon1.distance(polygon2)
+# 最小导线间距
+min_wire_spacing = 0.5
 
-print(min_clearance)
+# 创建导线缓冲区
+existing_buffers = [wire['line'].buffer(min_wire_spacing / 2, cap_style=2, join_style=2) for wire in all_wires]
+
+# 输出缓冲区结果
+for buffer in existing_buffers:
+    print(buffer)

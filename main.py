@@ -44,10 +44,10 @@ r3 2 0 4.7k
 """
 
 # Adjustable parameters for layout attempts
-EnlargeSize = 3
-max_attempts = 300
+EnlargeSize = 1.5
+max_attempts = 30
 routing_method = 1
-auto = 1
+auto = 0
 shrink_size = 0.05
 
 # --------------------------------------------------------------------------------------------

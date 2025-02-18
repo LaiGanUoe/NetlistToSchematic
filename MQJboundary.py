@@ -29,47 +29,45 @@ import schemdraw.elements as elm
 #     print('abs_ref:' +str(element.absanchors['drain']))
 #     print('abs_ref:' +str(element.absanchors['gate']))
 #     print('abs_ref:' +str(element.absanchors['source']))
+
+# with schemdraw.Drawing() as d:
+#     # adding a PFet component
+#     element = elm.PFet(bulk=True).at((1, 2)).right().reverse()
+#     element.scalex(90/82)
+#     element.scaley(6/5)
+#     element = d.add(element)  # P-type MOSFET，方向为右
 #
-#     # print('abs_ref:' +str(element.absanchors['source']))
-
-with schemdraw.Drawing() as d:
-    # adding a jfet component
-    element = elm.PFet(bulk=True).at((1, 2)).up()
-    element.scalex(90/82)
-    element.scaley(6/5)
-    element = d.add(element)  # JFet，方向为右
-
-    # Get global position of anchors for absolute positioning
-    absSource = element.absanchors['drain']
-
-    # Get local position of anchors for relative positioning and wait for the user to convert to the global position
-    source = element.anchors['drain']
-    print("source:", source)
-    print("absSource:", absSource)
-    # Calculate the difference between the global and local positions
-    xDiff = absSource.x - source[0]
-    yDiff = absSource.y - source[1]
-
-    # Calculate the global position of the bounding box---for only right direction
-    ymin_global = yDiff + element.get_bbox().ymin
-    ymax_global = yDiff + element.get_bbox().ymax
-    xmin_global = xDiff + element.get_bbox().xmin
-    xmax_global = xDiff + element.get_bbox().xmax
-    print(
-        f"\nBBox: xmin={element.get_bbox().ymin}, ymin={element.get_bbox().ymin}, xmax={element.get_bbox().xmax}, ymax={element.get_bbox().ymax}")
-
-    print('abs_ref:' + str(element.absanchors['drain']))
-    print('abs_ref:' + str(element.absanchors['gate']))
-    print('abs_ref:' + str(element.absanchors['source']))
-    print('abs_ref:' +str(element.absanchors['bulk']))
+#     # Get global position of anchors for absolute positioning
+#     absSource = element.absanchors['drain']
+#
+#     # Get local position of anchors for relative positioning and wait for the user to convert to the global position
+#     source = element.anchors['drain']
+#     print("source:", source)
+#     print("absSource:", absSource)
+#     # Calculate the difference between the global and local positions
+#     xDiff = absSource.x - source[0]
+#     yDiff = absSource.y - source[1]
+#
+#     # Calculate the global position of the bounding box---for only right direction
+#     ymin_global = yDiff + element.get_bbox().ymin
+#     ymax_global = yDiff + element.get_bbox().ymax
+#     xmin_global = xDiff + element.get_bbox().xmin
+#     xmax_global = xDiff + element.get_bbox().xmax
+#     print(
+#         f"\nBBox: xmin={element.get_bbox().ymin}, ymin={element.get_bbox().ymin}, xmax={element.get_bbox().xmax}, ymax={element.get_bbox().ymax}")
+#
+#     print('abs_ref:' + str(element.absanchors['drain']))
+#     print('abs_ref:' + str(element.absanchors['gate']))
+#     print('abs_ref:' + str(element.absanchors['source']))
+#     print('abs_ref:' +str(element.absanchors['bulk']))
 
 
 # with schemdraw.Drawing() as d:
-#     # adding a jfet component
-#     element = elm.Bjt(bulk=True).at((1, 2)).right()
+#     # adding a Bjt component
+#     element = elm.Bjt(bulk=True).at((1, 2)).flip()
 #     element.scalex(600/451)
 #     element.scaley(300/209)
-#     element = d.add(element)  # JFet，方向为右
+#     element = d.add(element)  # Bjt，方向为右
 #
 #     # Get global position of anchors for absolute positioning
 #     absSource = element.absanchors['base']
@@ -93,4 +91,32 @@ with schemdraw.Drawing() as d:
 #     print('abs_ref:' + str(element.absanchors['base']))
 #     print('abs_ref:' + str(element.absanchors['collector']))
 #     print('abs_ref:' + str(element.absanchors['emitter']))
+
+# with schemdraw.Drawing() as d:
+#     # adding a Bjt component
+#     element = elm.Resistor().at((1, 2)).right()
+#     element.scalex(1)
+#     element.scaley(1)
+#     element = d.add(element)  # Bjt，方向为右
 #
+#     # Get global position of anchors for absolute positioning
+#     absSource = element.absanchors['start']
+#
+#     # Get local position of anchors for relative positioning and wait for the user to convert to the global position
+#     source = element.anchors['start']
+#     print("source:", source)
+#     print("absSource:", absSource)
+#     # Calculate the difference between the global and local positions
+#     xDiff = absSource.x - source[0]
+#     yDiff = absSource.y - source[1]
+#
+#     # Calculate the global position of the bounding box---for only right direction
+#     ymin_global = yDiff + element.get_bbox().ymin
+#     ymax_global = yDiff + element.get_bbox().ymax
+#     xmin_global = xDiff + element.get_bbox().xmin
+#     xmax_global = xDiff + element.get_bbox().xmax
+#     print(
+#         f"\nBBox: xmin={element.get_bbox().ymin}, ymin={element.get_bbox().ymin}, xmax={element.get_bbox().xmax}, ymax={element.get_bbox().ymax}")
+#
+#     print('abs_ref:' + str(element.absanchors['start']))
+#     print('abs_ref:' + str(element.absanchors['end']))
